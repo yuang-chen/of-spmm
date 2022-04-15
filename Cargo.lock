@@ -49,6 +49,14 @@ dependencies = [
  "cmake",
  "glob",
  "jobserver",
+ "oneflow_common",
+ "oneflow_deps",
+]
+
+[[package]]
+name = "oneflow_common"
+version = "0.1.0"
+dependencies = [
  "oneflow_deps",
 ]
 
