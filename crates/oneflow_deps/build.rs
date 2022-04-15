@@ -15,4 +15,10 @@ fn main() {
         .define("GLOG_HASH", glog_hash)
         .generator("Ninja")
         .build();
+    println!(
+        "cargo:rustc-link-search=native={}",
+        &out_lib_path.to_str().unwrap()
+    );
+    println!("cargo:rustc-link-lib=static=glogd");
+    // println!("cargo:rustc-link-lib=static=stdc++");
 }
