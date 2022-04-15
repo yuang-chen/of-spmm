@@ -50,3 +50,14 @@ dependencies = [
  "glob",
  "jobserver",
 ]
+
+[[package]]
+name = "oneflow_deps"
+version = "0.1.0"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
+name = "oneflow_proto_py"
+version = "0.1.0"

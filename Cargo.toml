@@ -3,6 +3,13 @@ name = "oneflow"
 version = "0.7.0"
 edition = "2021"
 
+[workspace]
+
+members = [
+    "crates/oneflow_proto_py",
+    "crates/oneflow_deps",
+]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
