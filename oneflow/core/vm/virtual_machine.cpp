@@ -288,11 +288,25 @@ class MultiThreadScheduleCtx : public vm::ScheduleCtx {
   Notifier* cb_notifier_;
 };
 
+class MultiThreadDisableGCThreadScheduleCtx : public vm::ScheduleCtx {
+ public:
+  explicit MultiThreadDisableGCThreadScheduleCtx(vm::VirtualMachineEngine* vm) : vm_(vm) {}
+  ~MultiThreadDisableGCThreadScheduleCtx() = default;
+
+  void OnGarbageMsgPending() const override { vm_->Callback(); }
+  void OnWorkerLoadPending(vm::ThreadCtx* thread_ctx) const override {
+    thread_ctx->mut_notifier()->Notify();
+  }
+
+ private:
+  vm::VirtualMachineEngine* vm_;
+};
+
 }  // namespace
 
 void VirtualMachine::ScheduleLoop(const std::function<void()>& Initializer) {
   Initializer();
-  MultiThreadScheduleCtx schedule_ctx(&callback_notifier_);
+  MultiThreadDisableGCThreadScheduleCtx schedule_ctx(mut_vm());
   auto* vm = mut_vm();
   while (pending_notifier_.WaitAndClearNotifiedCnt() == kNotifierStatusSuccess) {
     OF_PROFILER_RANGE_GUARD("VirtualMachine::ScheduleLoop");
