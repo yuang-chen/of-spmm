@@ -88,6 +88,7 @@ class AddFunctor {
     } else {
       op = broadcast_add_op_.get();
     }
+    std::cout << "functor, inplace: " << inplace << std::endl;
     if (inplace) {
       JUST(CheckInplaceCastValid(input, input_cast));
       JUST(CheckInplaceValid(input));

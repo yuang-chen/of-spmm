@@ -66,7 +66,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("bs", type=int)
 parser.add_argument("threshold", type=str)
 parser.add_argument("iters", type=int)
-parser.add_argument("exp_id", type=str)
+parser.add_argument("--exp_id", type=str, default="tmp")
 parser.add_argument("--no-dtr", action=NegativeArgAction, env_var_name="OF_DTR")
 parser.add_argument("--no-lr", action=NegativeArgAction, env_var_name="OF_DTR_LR")
 parser.add_argument("--no-o-one", action=NegativeArgAction, env_var_name="OF_DTR_O_ONE")
@@ -82,9 +82,10 @@ parser.add_argument(
     "--high-add-n", action=PositiveArgAction, env_var_name="OF_DTR_HIGH_ADD_N"
 )
 parser.add_argument("--debug-level", type=int, default=0)
-parser.add_argument("--no-dataloader", action='store_true')
+parser.add_argument("--no-dataloader", action="store_true")
 
 args = parser.parse_args()
+args.no_dataloader = True
 
 # print(os.environ)
 
@@ -92,7 +93,9 @@ import oneflow as flow
 import oneflow.nn as nn
 import flowvision
 import flowvision.transforms as transforms
-import flowvision.models as models
+
+# import flowvision.models as models
+import resnet50_model as models
 
 # import resnet50_model
 # import resnet50
@@ -126,28 +129,30 @@ def display():
 
 model = models.resnet50()
 
-weights = flow.load("/tmp/abcdef")
-model.load_state_dict(weights, strict=False)
+# flow.save(model.state_dict(), "/tmp/abcdef")
+# weights = flow.load("/tmp/abcdef")
+# model.load_state_dict(weights)
 
 criterion = nn.CrossEntropyLoss()
 
 cuda0 = flow.device("cuda:0")
 
+print('to cuda begin')
 model.to(cuda0)
+flow.comm.barrier()
+print('to cuda end')
 
 criterion.to(cuda0)
 
 learning_rate = 0.1
-optimizer = flow.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=1e-4)
-
-normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                 std=[0.229, 0.224, 0.225])
+# optimizer = flow.optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=1e-4)
+optimizer = flow.optim.SGD(model.parameters(), lr=learning_rate, momentum=0)
 
 if args.no_dataloader:
     global data
     global label
-    data = flow.ones(args.bs, 3, 224, 224).to('cuda')
-    label = flow.ones(args.bs, dtype=flow.int64).to('cuda')
+    data = flow.ones(args.bs, 3, 224, 224).to("cuda")
+    label = flow.ones(args.bs, dtype=flow.int64).to("cuda")
 
     class FixedDataset(flow.utils.data.Dataset):
         def __len__(self):
@@ -184,43 +189,35 @@ if args.dtr:
     # temp()
 
 for iter, (train_data, train_label) in enumerate(train_data_loader):
-# for iter in range(10000):
+    # for iter in range(10000):
     # train_data = data
     # train_label = label
     if iter >= ALL_ITERS:
         break
 
-    train_data = train_data.to(cuda0)
-    train_label = train_label.to(cuda0)
-
     if iter >= WARMUP_ITERS:
         start_time = time.time()
-
     logits = model(train_data)
-    loss = criterion(logits, train_label)
-    del logits
+    loss = logits.sum() # criterion(logits, train_label)
+    if (iter + 1) % 1 == 0:
+        print("loss: ", loss.numpy())
     loss.backward()
-    # train_bar.set_description(
-    #     "Epoch {}: loss: {:.4f}".format(iter + 1, loss.item())
-    # )
-    # writer.add_scalar("Loss/train/loss", loss.item(), iter)
-    # writer.flush()
-    del loss
-
     optimizer.step()
     optimizer.zero_grad(True)
+    del logits
+    del loss
 
     flow.comm.barrier()
 
     if iter >= WARMUP_ITERS:
         end_time = time.time()
         this_time = end_time - start_time
-        print(f'iter: {iter}, time: {this_time}')
+        print(f"iter: {iter}, time: {this_time}")
         total_time += this_time
-    print(f'iter {iter} end')
+    print(f"iter {iter} end")
 
 end_time = time.time()
 print(
-f"{ALL_ITERS - WARMUP_ITERS} iters: avg {(total_time) / (ALL_ITERS - WARMUP_ITERS)}s"
+    f"{ALL_ITERS - WARMUP_ITERS} iters: avg {(total_time) / (ALL_ITERS - WARMUP_ITERS)}s"
 )
 

@@ -567,6 +567,7 @@ class Module(object):
 
     def to(self, device: Optional[Union[str, flow.device]] = None):
         def convert(t):
+            print(t.shape)
             return t.to(device)
 
         return self._apply(convert)

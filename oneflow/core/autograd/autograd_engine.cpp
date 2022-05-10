@@ -126,6 +126,7 @@ Maybe<void> AutogradEngine::RunBackwardAndSaveGrads4LeafTensorIf(const TensorTup
   JUST(CheckConsistentTensorsMeta(outputs));
   JUST(CheckConsistentTensorsMeta(out_grads));
   DisableCheckConsistentTensorMetaScope disable_meta_check;
+  LOG(INFO) << "RunBackwardAndSaveGrads4LeafTensorIf";
   return RunBackwardAndSaveGrads4LeafTensor(outputs, out_grads, retain_graph, create_graph);
 }
 
@@ -152,6 +153,7 @@ Maybe<void> FunctionNode::AccGrad4LeafTensor(bool create_graph) {
     auto& out = output_meta_data_[i];
 
     if (out->is_leaf() && out->requires_grad()) {
+      LOG(INFO) << "AccGrad4LeafTensor";
       JUST(CopyOrAccGrad(out.get(), /*autograd_mode=*/false));
 
       // control acc_grad to do boxing conditionally
@@ -234,9 +236,9 @@ GraphFunctionNode::GraphFunctionNode(const std::string& name,
   output_meta_data_.resize(outputs.size());
   output_tensor_infos_.reserve(outputs.size());
   for (int i = 0; i < outputs.size(); ++i) {
-    const auto& autograd_meta =
-        NewAutogradMeta(outputs.at(i)->requires_grad(), outputs.at(i)->is_leaf());
-    outputs.at(i)->set_autograd_meta(autograd_meta);
+    // const auto& autograd_meta =
+    //     NewAutogradMeta(outputs.at(i)->requires_grad(), outputs.at(i)->is_leaf());
+    // outputs.at(i)->set_autograd_meta(autograd_meta);
     output_meta_data_.at(i) = outputs.at(i)->mut_autograd_meta();
     output_tensor_infos_.emplace_back(TensorInfo(*outputs.at(i)));
   }
@@ -364,6 +366,8 @@ Maybe<void> GraphAutogradEngine::RunBackwardAndSaveGrads4LeafTensor(const Tensor
   }
   GraphTask graph_task(outputs, retain_graph, create_graph);
   JUST(graph_task.ComputeDependencies());
+  LOG(INFO) << "GraphTask::ComputeDependencies() done";
+  LOG(INFO) << "Apply() start";
   JUST(graph_task.Apply(/*save_grad_for_leaf=*/true));
   return Maybe<void>::Ok();
 }

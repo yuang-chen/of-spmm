@@ -106,6 +106,9 @@ void DTREagerBlobObject::unpin() {
 }
 
 Maybe<void> DTREagerBlobObject::evict() {
+  static size_t c = 0;
+  std::cout << "evict (No." << c++ << ")" << std::endl;
+  std::cout << "this:" << this << std::endl;
   CHECK_OR_RETURN(is_evictable());
   if (dtr::is_enabled_and_debug()) { LOG(INFO) << "evict " << this; }
   if (shape().elem_cnt() == 0) {
@@ -474,6 +477,7 @@ bool DTREagerBlobObject::is_evictable() const {
   if (compute_op_->inputs().empty()) { return false; }
   // FIXME: set_tensor_inputs should also include other outputs of the compute_op
   if (compute_op_->shared_opkernel()->user_op_conf_->op_type_name() == "nll") { return false; }
+  if (compute_op_->shared_opkernel()->user_op_conf_->op_type_name() == "copy") { return false; }
   // if (compute_op_->shared_opkernel()->user_op_conf_->op_type_name() == "conv_filter_grad") {
   // return false; } if (compute_op_->shared_opkernel()->user_op_conf_->op_type_name() ==
   // "matmul") { return false; }

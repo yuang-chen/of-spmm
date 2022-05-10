@@ -54,11 +54,13 @@ struct LocalCallOpKernelUtil final {
   static inline Maybe<void> Compute(const vm::InstructionMsg& instr_msg) {
     auto* operand = LocalCallOpKernelUtil::GetLocalCallOpKernelPhyInstrOperand(instr_msg).get();
     DeviceCtx* device_ctx = instr_msg.phy_instr_stream()->device_ctx().get();
+    std::cout << operand->shared_opkernel()->op_type_name() << " Compute" << std::endl;
     return ComputeOperand(operand, device_ctx);
   }
 
   static inline Maybe<void> ComputeOperand(LocalCallOpKernelPhyInstrOperand* operand,
                                            DeviceCtx* device_ctx) {
+    std::cout << operand->shared_opkernel()->op_type_name() << " ComputeOperand" << std::endl;
     OF_PROFILER_RANGE_PUSH("ResetPrior");
     operand->mut_opkernel()->composed_attrs_for_scheduler_thread()->ResetPrior(operand->attrs());
     OF_PROFILER_RANGE_POP();
@@ -417,6 +419,10 @@ Maybe<void> _RecursivelyCompute(
       auto local_call_op = DTROp2LocalCallOp(input->compute_op());
       CHECK_NOTNULL_OR_RETURN(local_call_op);
 
+      std::cout << "going to recompute " << input->compute_op() << "("
+                << input->compute_op_type_name() << ") for " << input << ", whose dptr is "
+                << input->dptr() << ", is in memory: " << input->is_in_memory()
+                << std::endl;
       if (dtr::is_enabled_and_debug()) {
         LOG(INFO) << "going to recompute " << input->compute_op() << "("
                   << input->compute_op_type_name() << ") for " << input << ", whose dptr is "
@@ -475,6 +481,7 @@ Maybe<void> _RecursivelyCompute(
 
 Maybe<void> RecursivelyCompute(const std::shared_ptr<vm::LocalCallOpKernelPhyInstrOperand>& operand,
                                DeviceCtx* device_ctx) {
+  std::cout << operand->shared_opkernel()->op_type_name() << " run from user" << std::endl;
   int pinned_num = JUST(IncReferenceNumOfRecomputedTensor(operand));
   if (dtr::is_enabled_and_debug()) {
     LOG(INFO) << "pinning input tensors ended, pinned num: " << pinned_num;

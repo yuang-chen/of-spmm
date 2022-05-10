@@ -113,7 +113,7 @@ void DtrCudaAllocator::DisplayAllPieces() {
   for (const auto& pair : ptr2piece_) {
     Piece* piece = pair.second;
     std::stringstream ss;
-    ss << "piece " << piece << ", " << (void*)piece->ptr << ", " << piece->size << ", "
+    ss << "piece " << piece << ", " << get_offset(piece->ptr) << ", " << piece->size << ", "
        << piece->bin_num;
     if (piece->tensor) {
       ss << ", tensor: " << piece->tensor
@@ -152,7 +152,6 @@ DtrCudaAllocator::Piece* DtrCudaAllocator::FindPiece(size_t aligned_size) {
   if (memory_ == nullptr) {
     const size_t size = dtr::memory_threshold();
     OF_CUDA_CHECK(cudaMalloc(&memory_, size));
-    LOG(INFO) << "****" << "BEGINNING-" << size << std::endl;
     Piece* piece = AllocatePiece();
     piece->size = size;
     piece->ptr = static_cast<char*>(memory_);
@@ -284,7 +283,6 @@ double get_cost(const vm::DTREagerBlobObject* ebo, int& coeff) {
 }
 
 DtrCudaAllocator::Piece* DtrCudaAllocator::EvictAndFindPiece(size_t size) {
-  if (dtr::is_enabled()) { LOG(INFO) << "****" << "START-EvictAndFindPiece" << std::endl; }
   if (dtr::is_enabled_and_debug()) { LOG(INFO) << "size: " << size; }
   auto start = ptr2piece_.begin();
   auto end = ptr2piece_.begin();
@@ -320,13 +318,15 @@ DtrCudaAllocator::Piece* DtrCudaAllocator::EvictAndFindPiece(size_t size) {
                                                                              end_id));
       }
       int coeff = -1;
-      cost += get_cost(end_tensor, coeff);
+      auto cur_op_cost = get_cost(end_tensor, coeff);
+      cost += cur_op_cost;
       end++;
       if (dtr::is_enabled_and_debug()) {
         LOG(INFO) << "move end, include op: "
                   << (end_tensor != nullptr ? end_tensor->compute_op_type_name() : "no tensor")
                   << ", size: " << end->second->size << ", total_size: " << total_size
-                  << ", cost: " << cost;
+                  << ", total_size: " << total_size << ", total cost: " << cost
+                  << ", cur op cost: " << cur_op_cost;
       }
 
     } else {
@@ -344,12 +344,13 @@ DtrCudaAllocator::Piece* DtrCudaAllocator::EvictAndFindPiece(size_t size) {
       if (start_tensor != nullptr) {
         coeff = Global<dtr::TensorPool>::Get()->update_after_pesudo_compute(start_tensor);
       }
-      cost -= get_cost(start_tensor, coeff);
+      auto cur_op_cost = get_cost(start_tensor, coeff);
+      cost -= cur_op_cost;
       if (dtr::is_enabled_and_debug()) {
         LOG(INFO) << "move start, exclude op: "
                   << (start_tensor != nullptr ? start_tensor->compute_op_type_name() : "no tensor")
                   << ", size: " << start->second->size << ", total_size: " << total_size
-                  << ", cost: " << cost;
+                  << ", total cost: " << cost << ", cur op cost: " << cur_op_cost;
       }
       start++;
     }
@@ -361,14 +362,15 @@ DtrCudaAllocator::Piece* DtrCudaAllocator::EvictAndFindPiece(size_t size) {
   for (auto it = min_start; it != min_end; ++it) {
     Piece* piece = it->second;
     pieces_to_be_evicted.push_back(piece);
+    if (true) {
+      int coeff = -1;
+      std::cout << "release dptr: " << get_offset(piece->ptr) << ", ebo: " << piece->tensor << ", size: " << piece->size
+                << ", cost: " << get_cost(piece->tensor, coeff) << ", compute op: "
+                << (piece->tensor != nullptr ? piece->tensor->compute_op_type_name() : "no tensor")
+                << std::endl;
+    }
   }
   for (auto* piece : pieces_to_be_evicted) {
-    if (dtr::is_enabled_and_debug()) {
-      int coeff = -1;
-      LOG(INFO) << "release dptr: " << (void*)piece->ptr << ", size: " << piece->size
-                << ", cost: " << get_cost(piece->tensor, coeff) << ", compute op: "
-                << (piece->tensor != nullptr ? piece->tensor->compute_op_type_name() : "no tensor");
-    }
     size2 += piece->size;
     // NOTE: evict will trigger the merge and deallocation of neighbour free pieces,
     // currently deallocation only set tensor to nullptr, not real free,
@@ -376,10 +378,11 @@ DtrCudaAllocator::Piece* DtrCudaAllocator::EvictAndFindPiece(size_t size) {
     if (piece->tensor != nullptr) { CHECK_JUST(piece->tensor->evict()); }
   }
   if (dtr::is_enabled_and_debug()) { LOG(INFO) << "evict size: " << size2; }
-
-  if (dtr::is_enabled()) { LOG(INFO) << "****" << "END-EvictAndFindPiece" << std::endl; }
-
   return FindPiece(size);
+}
+
+ptrdiff_t DtrCudaAllocator::get_offset(const char* mem_ptr) const {
+  return mem_ptr - (char*)memory_;
 }
 
 void DtrCudaAllocator::Allocate(char** mem_ptr, std::size_t size) {
@@ -401,10 +404,9 @@ void DtrCudaAllocator::Allocate(char** mem_ptr, std::size_t size) {
   CHECK(piece != nullptr) << "Error! : Out of memory when allocate size : " << size;
   CHECK_NOTNULL(piece->ptr);
   CHECK(ptr2piece_.find(piece->ptr) != ptr2piece_.end());
+  std::cout << "allocate offset: " << get_offset(piece->ptr) << ", size: " << piece->size << std::endl;
   *mem_ptr = piece->ptr;
   total_allocate_bytes_ += size;
-
-  LOG(INFO) << "****" << "ALLOCATE-" << mem_ptr << "-" << size << std::endl;
 
   if (ParseBooleanFromEnv("OF_DTR_LR", true)) { left_ = !left_; }
   // if (oneflow::DTRDebugEnabled()) {
@@ -458,6 +460,8 @@ size_t DtrCudaAllocator::allocated_memory() {
   CHECK_GE(total_allocate_bytes_, total_deallocate_bytes_);
   return total_allocate_bytes_ - total_deallocate_bytes_;
 }
+
+COMMAND(Global<DtrCudaAllocator>::SetAllocated(new DtrCudaAllocator(0)));
 
 }  // namespace vm
 }  // namespace oneflow
