@@ -110,7 +110,7 @@ void DtrNaiveCudaAllocator::UnMarkPiece(Piece* piece) {
   ptr2piece_.erase(it);
 }
 
-void DtrNaiveCudaAllocator::Display() {
+void DtrNaiveCudaAllocator::DisplayAllPieces() {
   double total_free_piece_bytes = 0.;
   for (int32_t bin_num = 0; bin_num < kBinNumSize; ++bin_num) {
     Bin* bin = &bins_.at(bin_num);
@@ -362,7 +362,7 @@ void DtrNaiveCudaAllocator::Allocate(char** mem_ptr, std::size_t size) {
 
   if (piece == nullptr) {
     CHECK_JUST(Global<dtr::TensorPool>::Get()->display2());
-    Display();
+    DisplayAllPieces();
   }
 
   CHECK(piece != nullptr) << "Error! : Out of memory when allocate size : " << size;

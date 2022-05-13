@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#include "oneflow/core/vm/dtr_naive_allocator.h"
 #include "oneflow/core/vm/instruction.h"
 #include "oneflow/core/eager/release_tensor_arg_phy_instr_operand.h"
 #include "oneflow/core/eager/eager_blob_object.h"
@@ -166,7 +167,7 @@ T dynamic_cast_with_check(U* ptr) {
 }
 
 void TempInstructionType::Compute(vm::Instruction* instruction) const {
-  auto* allocator = dynamic_cast_with_check<vm::DtrCudaAllocator*>(
+  auto* allocator = dynamic_cast_with_check<vm::DtrNaiveCudaAllocator*>(
       dynamic_cast_with_check<vm::ThreadSafeAllocator*>(
           instruction->stream().device_ctx()->mut_allocator())
           ->backend_allocator());

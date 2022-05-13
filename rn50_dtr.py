@@ -181,12 +181,12 @@ else:
 total_time = 0
 # train_bar = tqdm(train_data_loader, dynamic_ncols=True)
 
-if args.dtr:
-    for x in model.parameters():
-        x.grad = flow.zeros_like(x).to(cuda0)
-
+def temp():
     flow.comm.barrier()
-    # temp()
+    print('----------allocator start')
+    flow._oneflow_internal.eager.Temp()
+    flow.comm.barrier()
+    print('----------allocator end')
 
 for iter, (train_data, train_label) in enumerate(train_data_loader):
     # for iter in range(10000):
@@ -194,6 +194,13 @@ for iter, (train_data, train_label) in enumerate(train_data_loader):
     # train_label = label
     if iter >= ALL_ITERS:
         break
+
+    # temp()
+    if args.dtr:
+        for x in model.parameters():
+            x.grad = flow.zeros_like(x).to(cuda0)
+
+        flow.comm.barrier()
 
     if iter >= WARMUP_ITERS:
         start_time = time.time()

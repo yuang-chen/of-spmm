@@ -428,13 +428,12 @@ Maybe<void> InstructionsBuilder::ReleaseTensor(
 }
 
 Maybe<void> InstructionsBuilder::Temp() {
-  // const std::string instr_name = "Temp";
-  // intrusive::shared_ptr<vm::InstructionMsg> instruction =
-  //     intrusive::make_shared<vm::InstructionMsg>(instr_name);
-  // *instruction->mut_phy_instr_operand() = std::make_shared<vm::NoArgCbPhyInstrOperand>([]() {});
-  // instruction_list_->EmplaceBack(std::move(instruction));
-  // return Maybe<void>::Ok();
-  UNIMPLEMENTED_THEN_RETURN();
+  auto instruction = intrusive::make_shared<vm::InstructionMsg>(
+      Global<VirtualMachine>::Get()->mut_vm(), "Temp", nullptr,
+      // hack
+      std::make_shared<vm::BarrierPhyInstrOperand>([]() {}));
+  instruction_list_->EmplaceBack(std::move(instruction));
+  return Maybe<void>::Ok();
 }
 
 Maybe<void> InstructionsBuilder::SoftSyncStream(

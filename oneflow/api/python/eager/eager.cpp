@@ -32,4 +32,7 @@ ONEFLOW_API_PYBIND11_MODULE("eager", m) {
     return std::make_shared<one::DevVmDepObjectConsumeModeGuard>(
         one::DevVmDepObjectConsumeMode::NONE);
   });
+
+  m.def(
+      "Temp", []() { vm::Temp().GetOrThrow(); }, py::call_guard<py::gil_scoped_release>());
 }
