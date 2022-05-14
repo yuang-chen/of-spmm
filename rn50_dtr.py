@@ -151,8 +151,8 @@ optimizer = flow.optim.SGD(model.parameters(), lr=learning_rate, momentum=0)
 if args.no_dataloader:
     global data
     global label
-    data = flow.ones(args.bs, 3, 224, 224).to("cuda")
-    label = flow.ones(args.bs, dtype=flow.int64).to("cuda")
+    data = flow.ones(args.bs, 3, 224, 224)
+    label = flow.ones(args.bs, dtype=flow.int64)
 
     class FixedDataset(flow.utils.data.Dataset):
         def __len__(self):
@@ -204,6 +204,8 @@ for iter, (train_data, train_label) in enumerate(train_data_loader):
 
     if iter >= WARMUP_ITERS:
         start_time = time.time()
+    train_data = train_data.to('cuda')
+    train_label = train_label.to('cuda')
     logits = model(train_data)
     loss = logits.sum() # criterion(logits, train_label)
     if (iter + 1) % 1 == 0:
