@@ -25,6 +25,7 @@ limitations under the License.
 #include "oneflow/core/framework/tensor_tuple.h"
 #include "oneflow/core/functional/functional.h"
 #include "oneflow/core/functional/function_library.h"
+#include "oneflow/core/functional/sequence_function.h"
 
 namespace oneflow {
 namespace one {
@@ -116,6 +117,23 @@ class SubFunctor : public InplaceableBinaryFunctor {
   SubFunctor() {
     op_ = CHECK_JUST(one::OpBuilder("broadcast_sub").Input("x").Input("y").Output("z").Build());
   }
+  Maybe<Tensor> operator()(const std::shared_ptr<one::Tensor>& input,
+                           const std::shared_ptr<one::Tensor>& other, const Scalar& alpha,
+                           bool inplace) const {
+    if (IsIntegralDataType(input->dtype()->data_type())
+        && IsIntegralDataType(other->dtype()->data_type()) && alpha.IsFloatingPoint()) {
+      return Error::RuntimeError()
+             << "For integral input tensors, argument alpha must not be a floating point number.";
+    }
+    if ((alpha.IsIntegral() && alpha.Value<int64_t>() == 1)
+        || (alpha.IsFloatingPoint()
+            && std::fabs(alpha.Value<double>() - 1.0) < std::numeric_limits<double>::epsilon())) {
+      return InplaceableBinaryFunctor::operator()(input, other, inplace);
+    } else {
+      return InplaceableBinaryFunctor::operator()(input, JUST(functional::ScalarMul(alpha, other)),
+                                                  inplace);
+    }
+  }
 };
 
 class MulFunctor {
@@ -176,6 +194,40 @@ class InplaceMulFunctor {
  private:
   std::shared_ptr<OpExpr> mul_op_;
   std::shared_ptr<OpExpr> broadcast_mul_op_;
+};
+
+class AddcmulBaseFunctor {
+ public:
+  AddcmulBaseFunctor() = default;
+  Maybe<Tensor> operator()(const std::shared_ptr<one::Tensor>& input,
+                           const std::shared_ptr<one::Tensor>& tensor1,
+                           const std::shared_ptr<one::Tensor>& tensor2, const Scalar& value,
+                           bool inplace) const {
+    return SequenceFunction<Maybe<Tensor>()>([&]() { return functional::Mul(tensor1, tensor2); })
+        .then([&](const auto& x) { return functional::ScalarMul(value, x); })
+        .then([&](const auto& x) { return functional::Add(input, x, /*alpha=*/1, inplace); })
+        .call();
+  }
+};
+
+class AddcmulFunctor : public AddcmulBaseFunctor {
+ public:
+  AddcmulFunctor() = default;
+  Maybe<Tensor> operator()(const std::shared_ptr<one::Tensor>& input,
+                           const std::shared_ptr<one::Tensor>& tensor1,
+                           const std::shared_ptr<one::Tensor>& tensor2, const Scalar& value) const {
+    return AddcmulBaseFunctor::operator()(input, tensor1, tensor2, value, /*inplace=*/false);
+  }
+};
+
+class InplaceAddcmulFunctor : public AddcmulBaseFunctor {
+ public:
+  InplaceAddcmulFunctor() = default;
+  Maybe<Tensor> operator()(const std::shared_ptr<one::Tensor>& input,
+                           const std::shared_ptr<one::Tensor>& tensor1,
+                           const std::shared_ptr<one::Tensor>& tensor2, const Scalar& value) const {
+    return AddcmulBaseFunctor::operator()(input, tensor1, tensor2, value, /*inplace=*/true);
+  }
 };
 
 class DivFunctor : public BinaryFloatFunctor {
@@ -354,18 +406,12 @@ class ScalarDivByTensorFunctor : public BinaryFunctor {
   }
 };
 
-class ReshapeLikeFunctor : public BinaryFunctor {
- public:
-  ReshapeLikeFunctor() {
-    op_ =
-        CHECK_JUST(one::OpBuilder("reshape_like").Input("in").Input("like").Output("out").Build());
-  }
-};
-
 }  // namespace impl
 
 ONEFLOW_FUNCTION_LIBRARY(m) {
   m.add_functor<impl::AddFunctor>("Add");
+  m.add_functor<impl::AddcmulFunctor>("Addcmul");
+  m.add_functor<impl::InplaceAddcmulFunctor>("InplaceAddcmul");
   m.add_functor<impl::Atan2Functor>("Atan2");
   m.add_functor<impl::SubFunctor>("Sub");
   m.add_functor<impl::MulFunctor>("Mul");
@@ -388,7 +434,6 @@ ONEFLOW_FUNCTION_LIBRARY(m) {
   m.add_functor<impl::ScalarMulByTensorFunctor>("ScalarMulByTensor");
   m.add_functor<impl::ScalarDivByTensorFunctor>("ScalarDivByTensor");
   m.add_functor<impl::BroadcastFModFunctor>("BroadcastFMod");
-  m.add_functor<impl::ReshapeLikeFunctor>("ReshapeLike");
   m.add_functor<impl::FloorDivFunctor>("FloorDiv");
 };
 
