@@ -18,7 +18,7 @@ from oneflow.framework.docstr.utils import add_docstr
 
 add_docstr(
     oneflow.max,
-    """
+    """max(input, dim, keepdim)
     oneflow.max(input, dim=None, keepdim=False)
 
     Computes the maximum value of all elements in the input tensor.
@@ -54,7 +54,7 @@ add_docstr(
 
 add_docstr(
     oneflow.min,
-    """
+    """min(input, dim, keepdim)
     oneflow.min(input, dim=None, keepdim=False)
     
     Computes the minimum value of all elements in the input tensor.
