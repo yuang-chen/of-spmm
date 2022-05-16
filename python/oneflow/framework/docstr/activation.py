@@ -48,7 +48,7 @@ add_docstr(
 
 add_docstr(
     oneflow.relu,
-    """
+    """relu(inplace)
     Applies the rectified linear unit function element-wise. See :class:`~oneflow.nn.ReLU` for more details. 
 
     Args:
@@ -337,7 +337,7 @@ add_docstr(
         >>> import numpy as np
         >>> import oneflow as flow
 
-        >>> x = np.array([0.81733328, 0.43621480, 0.10351428])
+        >>> x = flow.tensor(np.array([0.81733328, 0.43621480, 0.10351428]))
         >>> input = flow.tensor(x, dtype=flow.float32)
         >>> out = flow.nn.functional.sigmoid(input)
         >>> out
