@@ -45,10 +45,10 @@ static constexpr auto* GetEagerNcclLocalDepObject =
 
 void LaunchLazyJobPhyInstrOperand::ForEachMutMirroredObject(
     const std::function<void(vm::MirroredObject* compute)>& DoEach) const {
-  for (const auto& eager_blob_object : *param_blob_objects_) {
-    DoEach(CHECK_JUST(eager_blob_object->compute_local_dep_object()));
-  }
-  DoEach(GetStaticGlobalTransportLocalDepObject());
+//  for (const auto& eager_blob_object : *param_blob_objects_) {
+//    DoEach(CHECK_JUST(eager_blob_object->compute_local_dep_object()));
+//  }
+//  DoEach(GetStaticGlobalTransportLocalDepObject());
 }
 
 }  // namespace vm
