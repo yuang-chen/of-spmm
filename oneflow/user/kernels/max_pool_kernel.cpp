@@ -555,9 +555,10 @@ class OneDnnMaxPool1dKernel final : public user_op::OpKernel {
     dnnl::memory::dims padding_dims_r = {0, params_3d.padding()[2]};
     dnnl::memory::dims dilation = {0, params_3d.dilation_3d()[2] - 1};
 
-    OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnPoolForwardCompute(
+    OneDnnPoolKernelUtil<T>::OneDnnPoolForwardCompute(
         ctx->stream(), src_dims, dst_dims, kernel_dims, strides_dims, padding_dims_l,
-        padding_dims_r, dilation, dnnl::memory::format_tag::nchw, src, dest, indice_ptr);
+        padding_dims_r, dilation, dnnl::memory::format_tag::nchw, src, dest, indice_ptr,
+        dnnl::algorithm::pooling_max);
   }
 };
 
@@ -597,9 +598,10 @@ class OneDnnMaxPool1dGradKernel final : public user_op::OpKernel {
     dnnl::memory::dims padding_dims_r = {0, params_3d.padding()[2]};
     dnnl::memory::dims dilation = {0, params_3d.dilation_3d()[2] - 1};
 
-    OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnpoolBackwardCompute(
+    OneDnnPoolKernelUtil<T>::OneDnnpoolBackwardCompute(
         ctx->stream(), diff_dst_dims, diff_src_dims, kernel_dims, strides_dims, padding_dims_l,
-        padding_dims_r, dilation, dnnl::memory::format_tag::nchw, src, dest, indice_ptr);
+        padding_dims_r, dilation, dnnl::memory::format_tag::nchw, src, dest, indice_ptr,
+        dnnl::algorithm::pooling_max);
   };
 };
 
@@ -640,13 +642,15 @@ class OneDnnMaxPool2dKernel final : public user_op::OpKernel {
     dnnl::memory::dims padding_dims_r = {params_3d.padding()[1], params_3d.padding()[2]};
     dnnl::memory::dims dilation = {params_3d.dilation_3d()[1] - 1, params_3d.dilation_3d()[2] - 1};
     if (data_format == "channels_first") {
-      OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnPoolForwardCompute(
+      OneDnnPoolKernelUtil<T>::OneDnnPoolForwardCompute(
           ctx->stream(), src_dims, dst_dims, kernel_dims, strides_dims, padding_dims_l,
-          padding_dims_r, dilation, dnnl::memory::format_tag::nchw, src, dest, indice_ptr);
+          padding_dims_r, dilation, dnnl::memory::format_tag::nchw, src, dest, indice_ptr,
+          dnnl::algorithm::pooling_max);
     } else if (data_format == "channels_last") {
-      OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnPoolForwardCompute(
+      OneDnnPoolKernelUtil<T>::OneDnnPoolForwardCompute(
           ctx->stream(), src_dims, dst_dims, kernel_dims, strides_dims, padding_dims_l,
-          padding_dims_r, dilation, dnnl::memory::format_tag::nhwc, src, dest, indice_ptr);
+          padding_dims_r, dilation, dnnl::memory::format_tag::nhwc, src, dest, indice_ptr,
+          dnnl::algorithm::pooling_max);
     } else {
       UNIMPLEMENTED() << "Unsupported data_format";
     }
@@ -690,15 +694,15 @@ class OneDnnMaxPool2dGradKernel final : public user_op::OpKernel {
     dnnl::memory::dims dilation = {params_3d.dilation_3d()[1] - 1, params_3d.dilation_3d()[2] - 1};
 
     if (data_format == "channels_first") {
-      OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnpoolBackwardCompute(
+      OneDnnPoolKernelUtil<T>::OneDnnpoolBackwardCompute(
           ctx->stream(), diff_dst_dims, diff_src_dims, kernel_dims, strides_dims, padding_dims_l,
           padding_dims_r, dilation, dnnl::memory::format_tag::nchw, (void*)src, (void*)dest,
-          (void*)indice_ptr);
+          (void*)indice_ptr, dnnl::algorithm::pooling_max);
     } else if (data_format == "channels_last") {
-      OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnpoolBackwardCompute(
+      OneDnnPoolKernelUtil<T>::OneDnnpoolBackwardCompute(
           ctx->stream(), diff_dst_dims, diff_src_dims, kernel_dims, strides_dims, padding_dims_l,
           padding_dims_r, dilation, dnnl::memory::format_tag::nhwc, (void*)src, (void*)dest,
-          (void*)indice_ptr);
+          (void*)indice_ptr, dnnl::algorithm::pooling_max);
     } else {
       UNIMPLEMENTED() << "Unsupported data_format";
     }
@@ -744,9 +748,10 @@ class OneDnnMaxPool3dKernel final : public user_op::OpKernel {
     dnnl::memory::dims dilation = {params_3d.dilation_3d()[0] - 1, params_3d.dilation_3d()[1] - 1,
                                    params_3d.dilation_3d()[2] - 1};
 
-    OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnPoolForwardCompute(
+    OneDnnPoolKernelUtil<T>::OneDnnPoolForwardCompute(
         ctx->stream(), src_dims, dst_dims, kernel_dims, strides_dims, padding_dims_l,
-        padding_dims_r, dilation, dnnl::memory::format_tag::ncdhw, src, dest, indice_ptr);
+        padding_dims_r, dilation, dnnl::memory::format_tag::ncdhw, src, dest, indice_ptr,
+        dnnl::algorithm::pooling_max);
   };
 };
 
@@ -790,9 +795,10 @@ class OneDnnMaxPool3dGradKernel final : public user_op::OpKernel {
     dnnl::memory::dims dilation = {params_3d.dilation_3d()[0] - 1, params_3d.dilation_3d()[1] - 1,
                                    params_3d.dilation_3d()[2] - 1};
 
-    OneDnnPoolKernelUtil<T, dnnl::algorithm::pooling_max>::OneDnnpoolBackwardCompute(
+    OneDnnPoolKernelUtil<T>::OneDnnpoolBackwardCompute(
         ctx->stream(), diff_dst_dims, diff_src_dims, kernel_dims, strides_dims, padding_dims_l,
-        padding_dims_r, dilation, dnnl::memory::format_tag::ncdhw, src, dest, indice_ptr);
+        padding_dims_r, dilation, dnnl::memory::format_tag::ncdhw, src, dest, indice_ptr,
+        dnnl::algorithm::pooling_max);
   };
 };
 

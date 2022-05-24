@@ -74,7 +74,8 @@ struct OneDnnPoolKernelUtil {
       const dnnl::memory::dims diff_src_dims, const dnnl::memory::dims kernel_dims,
       const dnnl::memory::dims strides_dims, const dnnl::memory::dims padding_dims_l,
       const dnnl::memory::dims padding_dims_r, const dnnl::memory::dims dilation,
-      dnnl::memory::format_tag format, void* diff_dst, void* diff_src, void* workspace, dnnl::algorithm algorithm) {
+      dnnl::memory::format_tag format, void* diff_dst, void* diff_src, void* workspace,
+      dnnl::algorithm algorithm) {
     auto data_type = CppTypeToOneDnnDtype<T>();
     ep::CpuStream* cpu_stream = stream->As<ep::CpuStream>();
     size_t num_threads = cpu_stream->device()->GetNumThreads();
