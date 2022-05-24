@@ -23,14 +23,19 @@ limitations under the License.
 
 namespace oneflow {
 
-template<typename T, dnnl::algorithm algorithm>
+template<typename T>
+bool OneDnnIsSupportDtype() {
+  return (std::is_same<T, float>::value || std::is_same<T, int32_t>::value);
+}
+
+template<typename T>
 struct OneDnnPoolKernelUtil {
   static void OneDnnPoolForwardCompute(
       ep::Stream* stream, const dnnl::memory::dims src_dims, const dnnl::memory::dims dst_dims,
       const dnnl::memory::dims kernel_dims, const dnnl::memory::dims strides_dims,
       const dnnl::memory::dims padding_dims_l, const dnnl::memory::dims padding_dims_r,
       const dnnl::memory::dims dilation, dnnl::memory::format_tag format, const void* src,
-      void* dest, void* indice_ptr) {
+      void* dest, void* indice_ptr, dnnl::algorithm algorithm) {
     auto data_type = CppTypeToOneDnnDtype<T>();
     ep::CpuStream* cpu_stream = stream->As<ep::CpuStream>();
     size_t num_threads = cpu_stream->device()->GetNumThreads();
@@ -69,7 +74,7 @@ struct OneDnnPoolKernelUtil {
       const dnnl::memory::dims diff_src_dims, const dnnl::memory::dims kernel_dims,
       const dnnl::memory::dims strides_dims, const dnnl::memory::dims padding_dims_l,
       const dnnl::memory::dims padding_dims_r, const dnnl::memory::dims dilation,
-      dnnl::memory::format_tag format, void* diff_dst, void* diff_src, void* workspace) {
+      dnnl::memory::format_tag format, void* diff_dst, void* diff_src, void* workspace, dnnl::algorithm algorithm) {
     auto data_type = CppTypeToOneDnnDtype<T>();
     ep::CpuStream* cpu_stream = stream->As<ep::CpuStream>();
     size_t num_threads = cpu_stream->device()->GetNumThreads();
