@@ -509,6 +509,9 @@ class DataLoader(Generic[T_co]):
             )
 
 
+import oneflow
+
+
 class _BaseDataLoaderIter(object):
     def __init__(self, loader: DataLoader) -> None:
         self._dataset = loader.dataset
@@ -524,7 +527,9 @@ class _BaseDataLoaderIter(object):
         self._collate_fn = loader.collate_fn
         self._sampler_iter = iter(self._index_sampler)
         self._generator = loader.generator
+        oneflow._oneflow_internal.profiler.RangePush("cclog: dataloader init seed")
         self._base_seed = flow.tensor([0], dtype=flow.int64).uniform_().numpy().item()
+        oneflow._oneflow_internal.profiler.RangePop()
         # self._base_seed = flow.empty((), dtype=flow.int64).random_(generator=loader.generator).item()
         self._persistent_workers = loader.persistent_workers
         self._num_yielded = 0

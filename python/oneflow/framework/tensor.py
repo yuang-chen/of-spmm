@@ -1064,6 +1064,10 @@ def _is_floating_point(self):
     return flow.is_floating_point(self)
 
 
+import traceback
+import os
+
+
 def _numpy(self):
     assert (
         not self.is_lazy
@@ -1079,6 +1083,16 @@ def _numpy(self):
     assert self.is_local
     if self.device != flow.device("cpu"):
         self = self.cpu()
+
+    """
+    try:
+        raise Exception("Sorry, cc not use to numpy in LiBai.")
+    except:
+        print("======================================================")
+        print(" to_numpy pid is : ", os.getpid())
+        traceback.print_stack()
+    """
+
     return self.to_numpy()
 
 

@@ -34,7 +34,7 @@ class SrcSubsetTickCompTaskNode final : public CompTaskNode {
 };
 
 void SrcSubsetTickCompTaskNode::ProduceAllRegstsAndBindEdges() {
-  ProduceRegst("out", false, 2, 2);
+  ProduceRegst("out", false, 128, 128);
   ForEachOutDataEdge([&](TaskEdge* edge) { BindEdgeWithProducedRegst(edge, "out"); });
 }
 

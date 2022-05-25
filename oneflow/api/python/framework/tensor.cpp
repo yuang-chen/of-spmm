@@ -253,6 +253,7 @@ static PyObject* PyTensorObject_check_meta_consistency(PyObject* self, PyObject*
 }
 
 static PyObject* PyTensorObject_to_numpy(PyObject* self, PyObject* unused) {
+  // LOG(WARNING) << " cclog: unsupport use to numpy in LiBai.";
   HANDLE_ERRORS
   const auto& t = PyTensor_Unpack(self);
   DataType data_type = t->dtype()->data_type();

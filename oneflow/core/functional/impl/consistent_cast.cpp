@@ -213,12 +213,14 @@ Maybe<void> GetLogicalShapeAndDataType(Shape* logical_shape, DataType* /* in and
                                        Symbol<ParallelDesc> parallel_desc, Symbol<NdSbp> nd_sbp,
                                        bool sync_and_check_meta) {
   if (!sync_and_check_meta) {
+    /*
     if (JUST(RankGroup::New(parallel_desc)) != JUST(RankGroupScope::CurrentRankGroup())) {
       const auto& flat_shape_dtype =
           JUST(BroadcastShapeAndDtype(*physical_shape, *dtype, parallel_desc));
       physical_shape = JUST(flat_shape_dtype->ToShape());
       *dtype = flat_shape_dtype->dtype();
     }
+    */
     *logical_shape = *JUST(GetLogicalShape(*physical_shape, *nd_sbp, *parallel_desc));
     return Maybe<void>::Ok();
   }
