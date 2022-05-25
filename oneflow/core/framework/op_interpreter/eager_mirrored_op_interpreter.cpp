@@ -146,9 +146,10 @@ Maybe<void> NaiveInterpret(const UserOpExpr& user_op_expr, const TensorTuple& in
   for (int i = 0; i < output_eager_blob_objects->size(); i++) {
     auto* tensor_impl = JUST(TensorImpl4Tensor(outputs->at(i)));
     if (!output_eager_blob_objects->at(i)) {
-      // NOTE: if op support stride(non-contiguous input), then output tensor's stride
-      // should be inferred in InferLogicalTensorDesc.
-      // otherwise, it will be set here(according to shape).
+      // TODO: if op support stride(non-contiguous input), then output tensor's stride
+      // should be inferred in InferLogicalTensorDesc/InferPhysicalTensorDesc.
+      // otherwise, it will be set here(use set_stride) for temporarily, and
+      // will be reomved util all ops register inferred function of stride in InferLogicalTensorDesc/InferPhysicalTensorDesc.
       if (!JUST(user_op_expr.SupportNonContiguous())) {
         std::shared_ptr<Stride> stride(new Stride(*tensor_impl->shape()));
         tensor_impl->mut_tensor_meta()->set_stride(stride);
