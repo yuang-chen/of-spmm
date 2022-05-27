@@ -32,10 +32,10 @@ jobs:
             cmake-init-cache: "cmake/caches/ci/profiler/cuda.cmake"
     env:
       ONEFLOW_SRC: .
-      MANYLINUX_CACHE_DIR: ~/manylinux-cache-dir/canary-cu112
+      MANYLINUX_CACHE_DIR: ~/manylinux-cache-dir/canary-cu114
       WHEELHOUSE_DIR: manylinux-wheelhouse
-      COMPUTE_PLATFORM: cu112
-      CUDA_VERSION: "11.2"
+      COMPUTE_PLATFORM: cu114
+      CUDA_VERSION: "11.4"
       OSS_BUCKET: oneflow-staging
       OSS_WHEEL_HOUSE_DIR: ${{ matrix.entry }}/commit/${{ github.sha }}
       OSS_GITHUB_REF_DIR: ${{ matrix.entry }}/${{ github.ref }}
@@ -73,8 +73,6 @@ jobs:
           retry-failed-build: true
           clean-ccache: true
           python-versions: |
-            3.6
-            3.7
             3.8
       - name: Upload wheelhouse
         uses: ./.github/actions/upload_oss
