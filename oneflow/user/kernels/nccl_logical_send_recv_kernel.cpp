@@ -13,6 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+#include "oneflow/core/common/data_type.h"
+#include "oneflow/core/common/data_type.pb.h"
 #include "oneflow/core/framework/framework.h"
 #include "oneflow/core/device/nccl_util.h"
 #include "oneflow/core/job/parallel_desc.h"
@@ -86,7 +88,7 @@ NcclLogicalSendRecvState::NcclLogicalSendRecvState(user_op::KernelInitContext* c
 
   std::vector<TensorSliceView> src_send_intersections;
   std::vector<TensorSliceView> dst_recv_intersections;
-  GetSendRecvIntersection(parallel_id, parallel_desc_->hierarchy(), src_nd_sbp, dst_nd_sbp,
+  GetRankSendRecvIntersection(parallel_id, parallel_desc_->hierarchy(), src_nd_sbp, dst_nd_sbp,
                           logical_shape, &src_send_intersections, &dst_recv_intersections);
 
   CHECK_EQ(src_send_intersections.size(), parallel_num);
@@ -254,6 +256,7 @@ size_t InferTmpBufferSize(user_op::InferContext* ctx) {
   const Shape* out_shape = ctx->OutputShape("out", 0);
   const user_op::TensorDesc* logical_in_tensor = ctx->LogicalTensorDesc4ArgNameAndIndex("in", 0);
   const Shape& logical_shape = logical_in_tensor->shape();
+  const DataType data_type = logical_in_tensor->data_type();
 
   const NdSbp& src_nd_sbp = ctx->NdSbp4ArgNameAndIndex("in", 0);
   const NdSbp& dst_nd_sbp = ctx->NdSbp4ArgNameAndIndex("out", 0);
@@ -262,7 +265,7 @@ size_t InferTmpBufferSize(user_op::InferContext* ctx) {
 
   std::vector<TensorSliceView> src_send_intersections;
   std::vector<TensorSliceView> dst_recv_intersections;
-  GetSendRecvIntersection(parallel_id, ctx->parallel_desc().hierarchy(), src_nd_sbp, dst_nd_sbp,
+  GetRankSendRecvIntersection(parallel_id, ctx->parallel_desc().hierarchy(), src_nd_sbp, dst_nd_sbp,
                           logical_shape, &src_send_intersections, &dst_recv_intersections);
   int64_t buf_count = 0;
   CHECK_EQ(src_send_intersections.size(), parallel_num);
@@ -278,7 +281,7 @@ size_t InferTmpBufferSize(user_op::InferContext* ctx) {
     // Note: when src_nd_sbp has partial_sum, need a out_size buffer to copy and add to out.
     buf_count += out_shape->elem_cnt();
   }
-  return buf_count;
+  return buf_count * GetSizeOfDataType(data_type);
 }
 
 REGISTER_USER_KERNEL("_nccl_logical_send_recv")
