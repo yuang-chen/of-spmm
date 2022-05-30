@@ -15,6 +15,7 @@ limitations under the License.
 */
 #include "oneflow/core/framework/framework.h"
 #include "oneflow/core/device/nccl_util.h"
+#include "oneflow/core/framework/nd_sbp.h"
 #include "oneflow/core/job/parallel_desc.h"
 #include "oneflow/user/ops/nccl_logical_util.h"
 #include "oneflow/core/framework/infer_util.h"
@@ -72,8 +73,10 @@ NcclLogicalSendRecvState::NcclLogicalSendRecvState(user_op::KernelInitContext* c
   parallel_desc_ = std::make_unique<ParallelDesc>(ctx->parallel_desc());
   NdSbp src_nd_sbp;
   CHECK_JUST(GetNcclLogicalNdSbpFromAttr(ctx, "src_nd_sbp", &src_nd_sbp));
+  LOG(ERROR) << "src nd sbp " << NdSbpToString(src_nd_sbp);
   NdSbp dst_nd_sbp;
   CHECK_JUST(GetNcclLogicalNdSbpFromAttr(ctx, "dst_nd_sbp", &dst_nd_sbp));
+  LOG(ERROR) << "dst nd sbp " << NdSbpToString(dst_nd_sbp);
   const auto& parallel_hierarchy = parallel_desc_->hierarchy();
   src_nd_sbp_no_partial_parallel_ = !NdSbpHasPartialParallel(src_nd_sbp);
   CHECK_EQ(src_nd_sbp.sbp_parallel_size(), parallel_hierarchy->NumAxes());
@@ -252,11 +255,14 @@ void NcclLogicalSendRecv::Compute(user_op::KernelComputeContext* ctx, user_op::O
 
 size_t InferTmpBufferSize(user_op::InferContext* ctx) {
   const Shape* out_shape = ctx->OutputShape("out", 0);
+  LOG(ERROR) << "out shape " << out_shape->DebugStr();
   const user_op::TensorDesc* logical_in_tensor = ctx->LogicalTensorDesc4ArgNameAndIndex("in", 0);
   const Shape& logical_shape = logical_in_tensor->shape();
 
   const NdSbp& src_nd_sbp = ctx->NdSbp4ArgNameAndIndex("in", 0);
+  LOG(ERROR) << "src nd sbp " << NdSbpToString(src_nd_sbp);
   const NdSbp& dst_nd_sbp = ctx->NdSbp4ArgNameAndIndex("out", 0);
+  LOG(ERROR) << "dst nd sbp " << NdSbpToString(dst_nd_sbp);
   const int64_t parallel_num = ctx->parallel_num();
   const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
 
@@ -278,6 +284,7 @@ size_t InferTmpBufferSize(user_op::InferContext* ctx) {
     // Note: when src_nd_sbp has partial_sum, need a out_size buffer to copy and add to out.
     buf_count += out_shape->elem_cnt();
   }
+  LOG(ERROR) << "buf size " << buf_count;
   return buf_count;
 }
 

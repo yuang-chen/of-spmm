@@ -15,8 +15,10 @@ limitations under the License.
 */
 
 #include "oneflow/core/job/nd_sbp_util.h"
+#include <cstdint>
 #include "oneflow/core/common/balanced_splitter.h"
 #include "oneflow/core/common/nd_index_offset_helper.h"
+#include "oneflow/core/register/tensor_slice_view.h"
 
 namespace oneflow {
 
@@ -211,6 +213,16 @@ void GetRankSendRecvIntersection(int64_t parallel_id, const std::shared_ptr<Shap
       send_intersections->at(recv_i) = intersection;
     };
     DfsTraverse4NdSbp(recv_i, parallel_hierarchy, src_nd_sbp, add_to_send_intersections);
+  }
+  for (int64_t i = 0; i < send_intersections->size(); ++i) {
+    TensorSliceViewProto proto;
+    send_intersections->at(i).ToProto(&proto);
+    LOG(ERROR) << " rank " << parallel_id << " send " << proto.DebugString();
+  }
+  for (int64_t i = 0; i < recv_intersections->size(); ++i) {
+    TensorSliceViewProto proto;
+    recv_intersections->at(i).ToProto(&proto);
+    LOG(ERROR) << " rank " << parallel_id << " recv " << proto.DebugString();
   }
 }
 
