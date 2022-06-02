@@ -247,7 +247,13 @@ class TestLinearTrainGraphWithZeRO(oneflow.unittest.TestCase):
 @flow.unittest.skip_unless_1n4d()
 class TestLinearTrainGraph2DWithZeRO(oneflow.unittest.TestCase):
     def test_linear_train_graph_2d_with_zero_1(test_case):
+        _test_linear_train_graph_2d_with_zero(test_case, 1)
+
+    def test_linear_train_graph_2d_with_zero_2(test_case):
         _test_linear_train_graph_2d_with_zero(test_case, 2)
+
+    def test_linear_train_graph_2d_with_zero_2(test_case):
+        _test_linear_train_graph_2d_with_zero(test_case, 3)
 
 
 if __name__ == "__main__":
