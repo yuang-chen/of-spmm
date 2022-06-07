@@ -32,11 +32,10 @@ class NcclLogical2DSameDim0KernelCommState : public user_op::OpKernelState {
  public:
   explicit NcclLogical2DSameDim0KernelCommState(user_op::KernelInitContext* ctx)
       : is_init_(false),
-        has_independent_stream_(ctx->op_conf().has_stream_name_hint()),
-        stream_name_("NONE"),
+        stream_name_(EagerNcclCommMgr::kDefaultStreamName),
         parallel_desc_(ctx->parallel_desc()),
         this_parallel_id_(ctx->parallel_ctx().parallel_id()) {
-    if (has_independent_stream_) { stream_name_ = ctx->op_conf().stream_name_hint(); }
+    if (ctx->op_conf().has_stream_name_hint()) { stream_name_ = ctx->op_conf().stream_name_hint(); }
   }
   ~NcclLogical2DSameDim0KernelCommState() override = default;
 
@@ -71,17 +70,12 @@ class NcclLogical2DSameDim0KernelCommState : public user_op::OpKernelState {
       device_set.emplace(std::make_pair(machine_id, device_id));
     }
     EagerNcclCommMgr* comm_mgr = CHECK_NOTNULL(Global<EagerNcclCommMgr>::Get());
-    if (has_independent_stream_) {
-      comm_ = comm_mgr->GetCommForDeviceAndStreamName(device_set, stream_name_);
-    } else {
-      comm_ = comm_mgr->GetCommForDevice(device_set);
-    }
+    comm_ = comm_mgr->GetCommForDeviceAndStreamName(device_set, stream_name_);
     num_ranks_ = group_size;
     is_init_ = true;
   }
 
   bool is_init_;
-  bool has_independent_stream_;
   std::string stream_name_;
   ParallelDesc parallel_desc_;
   int64_t this_parallel_id_;
@@ -140,13 +134,14 @@ class NcclLogical2DSameDim0AllReduce final : public user_op::OpKernel {
     CHECK_EQ(in->data_type(), out->data_type());
     VLOG(3) << "[NcclLogical2D][SameDim0AllReduce] " << nccl_comm->stream_name() << " "
             << ctx->op_name() << std::endl;
+    ncclRedOp_t reduce_type = ncclRedOp_t::ncclSum;
+    if (in->data_type() == DataType::kBool) { reduce_type = ncclRedOp_t::ncclMax; }
     OF_NCCL_CHECK(ncclAllReduce(in->dptr(), out->mut_dptr(), in->shape().elem_cnt(),
-                                GetNcclDataType(in->data_type()), ncclRedOp_t::ncclSum,
-                                nccl_comm->comm(),
+                                GetNcclDataType(in->data_type()), reduce_type, nccl_comm->comm(),
                                 ctx->stream()->As<ep::CudaStream>()->cuda_stream()));
   };
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }
-  bool IsKernelLaunchSynchronized() const override { return false; }
+  // bool IsKernelLaunchSynchronized() const override { return false; }
 };
 
 class NcclLogical2DSameDim0AllGather final : public user_op::OpKernel {
@@ -176,7 +171,7 @@ class NcclLogical2DSameDim0AllGather final : public user_op::OpKernel {
                                 ctx->stream()->As<ep::CudaStream>()->cuda_stream()));
   };
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }
-  bool IsKernelLaunchSynchronized() const override { return false; }
+  // bool IsKernelLaunchSynchronized() const override { return false; }
 };
 
 template<typename T>
@@ -244,7 +239,7 @@ class NcclLogical2DSameDim0AllGatherNoncontinuous final : public user_op::OpKern
                       unpack_from_dim_vec.data(), unpack_from_ptr, perm.data(), out->mut_dptr());
   }
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }
-  bool IsKernelLaunchSynchronized() const override { return false; }
+  // bool IsKernelLaunchSynchronized() const override { return false; }
 };
 
 size_t Infer2DSameDim0AllGatherNoncontinuousKernelTmpBufferSize(user_op::InferContext* ctx) {
@@ -374,7 +369,7 @@ class NcclLogical2DSameDim0All2All final : public user_op::OpKernel {
     }
   };
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }
-  bool IsKernelLaunchSynchronized() const override { return false; }
+  // bool IsKernelLaunchSynchronized() const override { return false; }
 };
 
 size_t Infer2DSameDim0All2AllKernelTmpBufferSize(user_op::InferContext* ctx) {
@@ -399,11 +394,10 @@ class NcclLogical2DSameDim1KernelCommState final : public user_op::OpKernelState
  public:
   explicit NcclLogical2DSameDim1KernelCommState(user_op::KernelInitContext* ctx)
       : is_init_(false),
-        has_independent_stream_(ctx->op_conf().has_stream_name_hint()),
-        stream_name_("NONE"),
+        stream_name_(EagerNcclCommMgr::kDefaultStreamName),
         parallel_desc_(ctx->parallel_desc()),
         this_parallel_id_(ctx->parallel_ctx().parallel_id()) {
-    if (has_independent_stream_) { stream_name_ = ctx->op_conf().stream_name_hint(); }
+    if (ctx->op_conf().has_stream_name_hint()) { stream_name_ = ctx->op_conf().stream_name_hint(); }
   }
   ~NcclLogical2DSameDim1KernelCommState() = default;
 
@@ -425,12 +419,7 @@ class NcclLogical2DSameDim1KernelCommState final : public user_op::OpKernelState
         device_set.emplace(std::make_pair(machine_id, device_id));
       }
       EagerNcclCommMgr* comm_mgr = CHECK_NOTNULL(Global<EagerNcclCommMgr>::Get());
-      CHECK_NOTNULL(comm_mgr);
-      if (has_independent_stream_) {
-        comm_ = comm_mgr->GetCommForDeviceAndStreamName(device_set, stream_name_);
-      } else {
-        comm_ = comm_mgr->GetCommForDevice(device_set);
-      }
+      comm_ = comm_mgr->GetCommForDeviceAndStreamName(device_set, stream_name_);
       is_init_ = true;
     }
     return comm_;
@@ -440,7 +429,6 @@ class NcclLogical2DSameDim1KernelCommState final : public user_op::OpKernelState
 
  private:
   bool is_init_;
-  bool has_independent_stream_;
   std::string stream_name_;
   ParallelDesc parallel_desc_;
   int64_t this_parallel_id_;
@@ -468,13 +456,14 @@ class NcclLogical2DSameDim1AllReduce final : public user_op::OpKernel {
     CHECK_EQ(in->data_type(), out->data_type());
     VLOG(3) << "[NcclLogical2D][SameDim1AllReduce] " << nccl_comm->stream_name() << " "
             << ctx->op_name() << std::endl;
+    ncclRedOp_t reduce_type = ncclRedOp_t::ncclSum;
+    if (in->data_type() == DataType::kBool) { reduce_type = ncclRedOp_t::ncclMax; }
     OF_NCCL_CHECK(ncclAllReduce(in->dptr(), out->mut_dptr(), in->shape().elem_cnt(),
-                                GetNcclDataType(in->data_type()), ncclRedOp_t::ncclSum,
-                                nccl_comm->comm(),
+                                GetNcclDataType(in->data_type()), reduce_type, nccl_comm->comm(),
                                 ctx->stream()->As<ep::CudaStream>()->cuda_stream()));
   };
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }
-  bool IsKernelLaunchSynchronized() const override { return false; }
+  // bool IsKernelLaunchSynchronized() const override { return false; }
 };
 
 }  // namespace
@@ -495,6 +484,7 @@ REGISTER_USER_KERNEL("_nccl_logical_2D_same_dim0_all_gather")
                        && (user_op::HobDataType("out", 0) == GetDataType<dtype>::value)) \
       .SetInferTmpSizeFn(Infer2DSameDim0AllGatherNoncontinuousKernelTmpBufferSize);
 
+REGISTER_2D_SAME_DIM0_ALLGATHER_NONCONTINUOUS_KERNEL(bool)
 REGISTER_2D_SAME_DIM0_ALLGATHER_NONCONTINUOUS_KERNEL(int8_t)
 REGISTER_2D_SAME_DIM0_ALLGATHER_NONCONTINUOUS_KERNEL(int32_t)
 REGISTER_2D_SAME_DIM0_ALLGATHER_NONCONTINUOUS_KERNEL(int64_t)
@@ -510,6 +500,7 @@ REGISTER_2D_SAME_DIM0_ALLGATHER_NONCONTINUOUS_KERNEL(float16)
                        && (user_op::HobDataType("out", 0) == GetDataType<dtype>::value)) \
       .SetInferTmpSizeFn(Infer2DSameDim0All2AllKernelTmpBufferSize);
 
+REGISTER_2D_SAME_DIM0_ALL2ALL_KERNEL(bool)
 REGISTER_2D_SAME_DIM0_ALL2ALL_KERNEL(int8_t)
 REGISTER_2D_SAME_DIM0_ALL2ALL_KERNEL(int32_t)
 REGISTER_2D_SAME_DIM0_ALL2ALL_KERNEL(int64_t)
@@ -520,6 +511,12 @@ REGISTER_2D_SAME_DIM0_ALL2ALL_KERNEL(float16)
 REGISTER_USER_KERNEL("_nccl_logical_2D_same_dim1_all_reduce")
     .SetCreateFn<NcclLogical2DSameDim1AllReduce>()
     .SetIsMatchedHob(user_op::HobDeviceType() == DeviceType::kCUDA);
+
+REGISTER_USER_KERNEL_UNIFIED_NCCL_COMM_INIT("_nccl_logical_2D_same_dim0_all_reduce");
+REGISTER_USER_KERNEL_UNIFIED_NCCL_COMM_INIT("_nccl_logical_2D_same_dim0_all_gather");
+REGISTER_USER_KERNEL_UNIFIED_NCCL_COMM_INIT("_nccl_logical_2D_same_dim0_all_gather_noncontinuous");
+REGISTER_USER_KERNEL_UNIFIED_NCCL_COMM_INIT("_nccl_logical_2D_same_dim0_all2all");
+REGISTER_USER_KERNEL_UNIFIED_NCCL_COMM_INIT("_nccl_logical_2D_same_dim1_all_reduce");
 
 }  // namespace oneflow
 

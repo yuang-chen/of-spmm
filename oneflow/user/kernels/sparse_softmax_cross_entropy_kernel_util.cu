@@ -51,9 +51,9 @@ template<typename T, typename K>
 __global__ void ComputeDiffGpu(const int64_t num_instances, const int64_t num_classes,
                                const int64_t depth, const int64_t lower_bound, const T* prob,
                                const K* labels, const T* dy, T* dx) {
-  CUDA_1D_KERNEL_LOOP(i, num_instances) {
-    const int32_t row_id = i / num_classes;
-    const int32_t col_id = i - row_id * num_classes;
+  CUDA_1D_KERNEL_LOOP_T(int64_t, i, num_instances) {
+    const int64_t row_id = i / num_classes;
+    const int64_t col_id = i - row_id * num_classes;
     assert(labels[row_id] >= 0);
     assert(labels[row_id] < depth);
     K label = labels[row_id] - lower_bound;
@@ -69,9 +69,9 @@ template<typename K>
 __global__ void ComputeDiffGpuHalf(const int64_t num_instances, const int64_t num_classes,
                                    const int64_t depth, const int64_t lower_bound, const half* prob,
                                    const K* labels, const half* dy, half* dx) {
-  CUDA_1D_KERNEL_LOOP(i, num_instances) {
-    const int32_t row_id = i / num_classes;
-    const int32_t col_id = i - row_id * num_classes;
+  CUDA_1D_KERNEL_LOOP_T(int64_t, i, num_instances) {
+    const int64_t row_id = i / num_classes;
+    const int64_t col_id = i - row_id * num_classes;
     assert(labels[row_id] >= 0);
     assert(labels[row_id] < depth);
     K label = labels[row_id] - lower_bound;

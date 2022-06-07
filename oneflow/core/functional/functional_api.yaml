@@ -879,6 +879,17 @@
   signature: "Tensor (Tensor input, Shape repeat_shape) => Repeat"
   bind_python: True
 
+- name: "repeat_interleave_index"
+  signature: "Tensor (Tensor input, Tensor cumsum, Int32 dim) => RepeatInterLeaveIndex"
+  bind_python: False
+
+- name: "repeat_interleave"
+  signature: [
+    "Tensor (Tensor input, Int32 repeats, Int32 dim=None) => RepeatInterLeaveInt",
+    "Tensor (Tensor input, Tensor repeats, Int32 dim, Int32 output_size=None) => RepeatInterLeaveTensor",
+  ]
+  bind_python: True
+
 - name: "tile"
   signature: "Tensor (Tensor input, Shape dims) => Tile"
   bind_python: True
@@ -1795,7 +1806,7 @@
   bind_python: False
 
 - name: "local_to_global"
-  signature: "Tensor (Tensor x, Placement placement, SbpList sbp, Shape shape, DataType dtype) => LocalToConsistent"
+  signature: "Tensor (Tensor x, Placement placement, SbpList sbp, Shape shape, DataType dtype, Bool sync_data) => LocalToConsistent"
   bind_python: False
 
 - name: "to_global"
