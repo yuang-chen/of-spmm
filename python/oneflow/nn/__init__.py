@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-from oneflow.nn.graph import Graph
+from oneflow.nn.graph import Graph, ScriptedGraph
 from oneflow.nn.module import Module
 from oneflow.nn.modules.activation import (
     ELU,

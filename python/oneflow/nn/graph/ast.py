@@ -13,6 +13,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-from .graph import Graph
-from .scripted_graph import ScriptedGraph
-from .block import Block
+import ast
+from fileinput import filename
+import inspect
+from typing import Callable, List, Optional, Tuple
+
+
+def get_func_source_strs(func: Callable) -> Tuple[List[str], int, Optional[str]]:
+    file_name = None
+    try:
+        file_name = inspect.getsourcefile(func)
+        sourcelines, file_lineno = inspect.getsourcelines(func)
+    except OSError as e:
+        raise OSError(f"Can't get source for {func}.") from e
+
+    return sourcelines, file_lineno, file_name
