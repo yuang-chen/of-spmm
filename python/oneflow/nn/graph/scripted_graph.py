@@ -14,20 +14,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from typing import List
-from oneflow.nn.graph.ast import get_func_source_strs
+from oneflow.nn.graph.ast import GraphASTVisitor, get_func_source_strs
 from oneflow.nn.graph.graph import Graph
 import ast
 import textwrap
+import oneflow._oneflow_internal
+
 
 class ScriptedGraph(Graph):
     def __init__(self):
         super().__init__()
         self._build_method_ast = self._get_ast(self._get_build_method_source_str())
+        print(ast.dump(self._build_method_ast, indent=4))
+        visitor = GraphASTVisitor()
+        visitor.visit(self._build_method_ast)
+        oneflow._oneflow_internal.GraphAstToMLIR(self._build_method_ast)
 
     def _get_build_method_source_str(self) -> str:
         sourcelines, file_lineno, file_name = get_func_source_strs(self.build)
-        print(sourcelines)
-        return ''.join(sourcelines)
+        return "".join(sourcelines)
 
     def _get_ast(self, func_str: str):
         return ast.parse(textwrap.dedent(func_str))

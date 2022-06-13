@@ -45,7 +45,8 @@ file(
   "${PROJECT_SOURCE_DIR}/oneflow/user/*.*"
   "${PROJECT_SOURCE_DIR}/oneflow/api/*.*"
   "${PROJECT_SOURCE_DIR}/oneflow/maybe/*.*"
-  "${PROJECT_SOURCE_DIR}/oneflow/extension/python/*.*")
+  "${PROJECT_SOURCE_DIR}/oneflow/extension/python/*.*"
+  "${PROJECT_SOURCE_DIR}/oneflow/graph_mlir/*.*")
 
 foreach(oneflow_single_file ${oneflow_all_src})
   # Verify whether this file is for other platforms
@@ -477,7 +478,8 @@ if(BUILD_PYTHON)
     PATTERN "oneflow/core/profiler" EXCLUDE
     PATTERN "oneflow/core/transport" EXCLUDE
     PATTERN "oneflow/core/comm_network" EXCLUDE
-    PATTERN "oneflow/ir" EXCLUDE)
+    PATTERN "oneflow/ir" EXCLUDE
+    PATTERN "oneflow/graph_mlir" EXCLUDE)
   add_custom_target(
     install_oneflow_py_include
     COMMAND "${CMAKE_COMMAND}" -DCMAKE_INSTALL_COMPONENT=oneflow_py_include -P

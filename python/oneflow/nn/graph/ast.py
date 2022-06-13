@@ -18,6 +18,8 @@ from fileinput import filename
 import inspect
 from typing import Callable, List, Optional, Tuple
 
+from pyparsing import Any
+
 
 def get_func_source_strs(func: Callable) -> Tuple[List[str], int, Optional[str]]:
     file_name = None
@@ -28,3 +30,13 @@ def get_func_source_strs(func: Callable) -> Tuple[List[str], int, Optional[str]]
         raise OSError(f"Can't get source for {func}.") from e
 
     return sourcelines, file_lineno, file_name
+
+
+class GraphASTVisitor(ast.NodeVisitor):
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        print(type(node).__name__)
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> Any:
+        print("Constant", node.value)
+        self.generic_visit(node)
