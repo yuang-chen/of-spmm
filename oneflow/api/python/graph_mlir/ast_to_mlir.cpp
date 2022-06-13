@@ -38,24 +38,21 @@ Maybe<void> finishMLIRContext() {
 #endif
 
 Maybe<void> GraphAstToMLIR(py::object build_method_ast) {
-  py::object ast_module = py::module_::import("ast");
-  py::str ast_str = ast_module.attr("dump")(build_method_ast, "indent"_a = 4);
-  std::cout << std::string(ast_str) << std::endl;
+  // py::object ast_module = py::module_::import("ast");
+  // py::str ast_str = ast_module.attr("dump")(build_method_ast, "indent"_a = 4);
+  // std::cout << std::string(ast_str) << std::endl;
 
-  py::handle method = build_method_ast.attr("body")[0];
+  // py::handle method = build_method_ast.attr("body")[0];
 
-  py::str s = ast_module.attr("dump")(method, "indent"_a = 4);
+  // py::str s = ast_module.attr("dump")(method, "indent"_a = 4);
 
-  std::cout << std::string(s) << std::endl;
-
+  // std::cout << std::string(s) << std::endl;
   return Maybe<void>::Ok();
 }
 
 ONEFLOW_API_PYBIND11_MODULE("", m) {
-  m.def("GraphAstToMLIR", [](const py::object& graph_build_method_ast) -> Maybe<void> {
-    return initMLIRContext();
-    ;
-  });
+  m.def("GraphAstToMLIR",
+        [](const py::object& graph_build_method_ast) -> Maybe<void> { return initMLIRContext(); });
 }
 
 }  // namespace oneflow

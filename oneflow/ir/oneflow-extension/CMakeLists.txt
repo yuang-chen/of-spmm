@@ -18,6 +18,8 @@ oneflow_add_mlir_library(
   oneflow
   MLIRExecutionEngine
   MLIROneFlowTranslation
-  MLIROneFlowRuntime)
+  MLIROneFlowRuntime
+  ast_to_mlir
+  )
 mlir_check_all_link_libraries(MLIROneFlowExtension)
 add_custom_target(mex DEPENDS MLIROneFlowExtension)

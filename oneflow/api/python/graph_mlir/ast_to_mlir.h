@@ -18,10 +18,10 @@ limitations under the License.
 
 #include "oneflow/core/common/just.h"
 #include "oneflow/core/common/maybe.h"
-#include <pybind11/pybind11.h>
-#include <pybind11/pytypes.h>
+// #include <pybind11/pybind11.h>
+// #include <pybind11/pytypes.h>
 
-namespace py = pybind11;
+// namespace py = pybind11;
 
 namespace oneflow {
 
