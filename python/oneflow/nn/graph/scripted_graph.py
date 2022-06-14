@@ -19,6 +19,31 @@ from oneflow.nn.graph.graph import Graph
 import ast
 import textwrap
 import oneflow._oneflow_internal
+from fileinput import filename
+import inspect
+from typing import Callable, List, Optional, Tuple
+
+from pyparsing import Any
+
+def get_func_source_strs(func: Callable) -> Tuple[List[str], int, Optional[str]]:
+    file_name = None
+    try:
+        file_name = inspect.getsourcefile(func)
+        sourcelines, file_lineno = inspect.getsourcelines(func)
+    except OSError as e:
+        raise OSError(f"Can't get source for {func}.") from e
+
+    return sourcelines, file_lineno, file_name
+
+
+class GraphASTVisitor(ast.NodeVisitor):
+    def visit_Assign(self, node: ast.Assign) -> Any:
+        print(type(node).__name__)
+        self.generic_visit(node)
+
+    def visit_Constant(self, node: ast.Constant) -> Any:
+        print("Constant", node.value)
+        self.generic_visit(node)
 
 
 class ScriptedGraph(Graph):
@@ -29,6 +54,7 @@ class ScriptedGraph(Graph):
         visitor = GraphASTVisitor()
         visitor.visit(self._build_method_ast)
         oneflow._oneflow_internal.GraphAstToMLIR(self._build_method_ast)
+        oneflow._oneflow_internal.finish()
 
     def _get_build_method_source_str(self) -> str:
         sourcelines, file_lineno, file_name = get_func_source_strs(self.build)

@@ -13,8 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#ifndef ONEFLOW_API_PYTHON_AST_TO_MLIR_
-#define ONEFLOW_API_PYTHON_AST_TO_MLIR_
+#ifndef ONEFLOW_API_PYTHON_AST_TO_MLIR_API_
+#define ONEFLOW_API_PYTHON_AST_TO_MLIR_API_
 
 #include "oneflow/core/common/just.h"
 #include "oneflow/core/common/maybe.h"
@@ -25,8 +25,12 @@ limitations under the License.
 
 namespace oneflow {
 
-Maybe<void> initMLIRContext();
-Maybe<void> finishMLIRContext();
+void initAstToMLIRContext();
+void finishAstToMLIRContext();
+
+void emitMLIRConstantInt(int value);
+void emitMLIRConstantFloat(float value);
+void emitMLIRConstantBool(bool value); 
 
 }  // namespace oneflow
 
