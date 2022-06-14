@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from typing import List
-from oneflow.nn.graph.ast import GraphASTVisitor, get_func_source_strs
 from oneflow.nn.graph.graph import Graph
 import ast
 import textwrap
@@ -22,8 +21,9 @@ import oneflow._oneflow_internal
 from fileinput import filename
 import inspect
 from typing import Callable, List, Optional, Tuple
-
 from pyparsing import Any
+import mlir 
+
 
 def get_func_source_strs(func: Callable) -> Tuple[List[str], int, Optional[str]]:
     file_name = None
@@ -50,11 +50,11 @@ class ScriptedGraph(Graph):
     def __init__(self):
         super().__init__()
         self._build_method_ast = self._get_ast(self._get_build_method_source_str())
-        print(ast.dump(self._build_method_ast, indent=4))
-        visitor = GraphASTVisitor()
-        visitor.visit(self._build_method_ast)
-        oneflow._oneflow_internal.GraphAstToMLIR(self._build_method_ast)
-        oneflow._oneflow_internal.finish()
+        # print(ast.dump(self._build_method_ast, indent=4))
+        # visitor = GraphASTVisitor()
+        # visitor.visit(self._build_method_ast)
+        # oneflow._oneflow_internal.GraphAstToMLIR(self._build_method_ast)
+        # oneflow._oneflow_internal.finish()
 
     def _get_build_method_source_str(self) -> str:
         sourcelines, file_lineno, file_name = get_func_source_strs(self.build)

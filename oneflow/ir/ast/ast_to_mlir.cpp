@@ -71,7 +71,7 @@ void emitMLIRConstantInt(int value) {
   auto int_type = ::mlir_op_builder->getIntegerType(32);
   auto int_value = ::mlir_op_builder->getIntegerAttr(int_type, value);
   auto int_op = ::mlir_op_builder->create<LLVM::ConstantOp>(getNextLoc(), int_type, int_value);
-  
+
   ::mlir_module->push_back(int_op);
 }
 
@@ -86,7 +86,8 @@ void emitMLIRConstantBool(bool value) {
 void emitMLIRConstantFloat(float value) {
   auto float_type = ::mlir_op_builder->getF32Type();
   auto float_value = ::mlir_op_builder->getF32FloatAttr(value);
-  auto float_op = ::mlir_op_builder->create<LLVM::ConstantOp>(getNextLoc(), float_type, float_value);
+  auto float_op =
+      ::mlir_op_builder->create<LLVM::ConstantOp>(getNextLoc(), float_type, float_value);
 
   ::mlir_module->push_back(float_op);
 }

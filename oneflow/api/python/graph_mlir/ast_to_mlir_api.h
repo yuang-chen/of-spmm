@@ -30,7 +30,7 @@ void finishAstToMLIRContext();
 
 void emitMLIRConstantInt(int value);
 void emitMLIRConstantFloat(float value);
-void emitMLIRConstantBool(bool value); 
+void emitMLIRConstantBool(bool value);
 
 }  // namespace oneflow
 
