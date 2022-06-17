@@ -22,8 +22,9 @@ from fileinput import filename
 import inspect
 from typing import Callable, List, Optional, Tuple
 from pyparsing import Any
-import mlir 
 
+from mlir.ir import Context, InsertionPoint, Location, Module, Operation, TypeAttr, FunctionType
+from mlir.dialects import LLVM
 
 def get_func_source_strs(func: Callable) -> Tuple[List[str], int, Optional[str]]:
     file_name = None
@@ -45,16 +46,31 @@ class GraphASTVisitor(ast.NodeVisitor):
         print("Constant", node.value)
         self.generic_visit(node)
 
+class GraphMLIRBuilder(object):
+    def __init__(self, ast, mlir_file_name):
+        self._ast = ast
+        self._next_mlir_loc_line = 0
+        self._mlir_file_name = mlir_file_name
 
+    def _get_next_mlir_location(self):
+        loc = Location.file(self._mlir_file_name, line=self._next_mlir_loc_line, col=0)
+        self._next_mlir_loc_line += 1
+        return loc 
+
+    def gen_mlir(self):
+        module = None
+        with Context() as ctx:
+            module = Module.create(loc=self._get_next_mlir_location())
+            # with InsertionPoint(module.body), self._get_next_mlir_location():
+            #     op = func.FuncOp("main", ([], []))
+        return module 
 class ScriptedGraph(Graph):
     def __init__(self):
         super().__init__()
         self._build_method_ast = self._get_ast(self._get_build_method_source_str())
-        # print(ast.dump(self._build_method_ast, indent=4))
-        # visitor = GraphASTVisitor()
-        # visitor.visit(self._build_method_ast)
-        # oneflow._oneflow_internal.GraphAstToMLIR(self._build_method_ast)
-        # oneflow._oneflow_internal.finish()
+        mlir_builder = GraphMLIRBuilder(self._build_method_ast, "nn_Graph.mlir")
+        module = mlir_builder.gen_mlir()
+        print(module)
 
     def _get_build_method_source_str(self) -> str:
         sourcelines, file_lineno, file_name = get_func_source_strs(self.build)
