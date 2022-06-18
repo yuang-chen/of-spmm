@@ -313,6 +313,7 @@ void BinAllocator::Deallocate(char* mem_ptr, std::size_t size) {
     last_piece_insert_to_bin = prev_p;
   }
   InsertPiece2Bin(last_piece_insert_to_bin);
+  DeallocateFreeBlockForGarbageCollection();
 }
 
 }  // namespace vm
