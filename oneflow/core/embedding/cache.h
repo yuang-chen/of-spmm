@@ -59,7 +59,9 @@ class Cache {
   virtual void Get(ep::Stream* stream, uint32_t n_keys, const void* keys, void* values,
                    uint32_t* n_missing, void* missing_keys, uint32_t* missing_indices) = 0;
   virtual void Get(ep::Stream* stream, uint32_t n_keys, const void* keys, void* values,
-                   uint8_t* mask) = 0;
+                   uint8_t* mask) {
+    UNIMPLEMENTED();
+  }
   virtual void Put(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
                    uint32_t* n_evicted, void* evicted_keys, void* evicted_values) = 0;
   virtual void Dump(ep::Stream* stream, uint64_t start_key_index, uint64_t end_key_index,
