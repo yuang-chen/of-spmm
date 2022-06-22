@@ -421,6 +421,8 @@ class CacheImpl : public Cache {
 
   uint32_t ValueSize() const override { return options_.value_size; }
 
+  DataType ValueType() const override { return options_.value_type; }
+
   uint32_t MaxQueryLength() const override { return max_query_length_; }
 
   void ReserveQueryLength(uint32_t query_length) override {

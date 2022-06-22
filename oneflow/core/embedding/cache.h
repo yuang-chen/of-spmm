@@ -51,6 +51,7 @@ class Cache {
 
   virtual uint32_t KeySize() const = 0;
   virtual uint32_t ValueSize() const = 0;
+  virtual DataType ValueType() const = 0;
   virtual uint32_t MaxQueryLength() const = 0;
   virtual void ReserveQueryLength(uint32_t query_length) = 0;
   virtual uint64_t Capacity() const = 0;
