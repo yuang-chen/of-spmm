@@ -43,7 +43,8 @@ class KeyValueStore {
   }
   virtual void Put(ep::Stream* stream, uint32_t num_keys, const void* keys, const void* values) = 0;
   virtual void FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys, const void* keys,
-                                  const void* values, const void* update, float alpha) {
+                                  const void* values, const void* update, const float* lr,
+                                  float scale) {
     UNIMPLEMENTED();
   }
   virtual bool SnapshotExists(const std::string& name) = 0;

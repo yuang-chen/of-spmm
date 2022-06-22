@@ -68,8 +68,9 @@ class Cache {
   virtual void Put(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
                    uint32_t* n_evicted, void* evicted_keys, void* evicted_values) = 0;
   virtual void FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys, const void* keys,
-                                  const void* values, const void* update, float alpha,
-                                  uint32_t* n_evicted, void* evicted_keys, void* evicted_values) {
+                                  const void* values, const void* update, const float* lr,
+                                  float scale, uint32_t* n_evicted, void* evicted_keys,
+                                  void* evicted_values) {
     UNIMPLEMENTED();
   }
   virtual void Dump(ep::Stream* stream, uint64_t start_key_index, uint64_t end_key_index,

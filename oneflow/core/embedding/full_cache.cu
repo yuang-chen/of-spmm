@@ -278,7 +278,8 @@ __global__ typename std::enable_if<std::is_same<Elem, float>::value, void>::type
 FusedHalfUpdateKernel(uint32_t value_length, Elem* __restrict__ cache_values,
                       uint32_t values_elem_cnt, const Index* __restrict__ context,
                       const Elem* __restrict__ values, const half* __restrict__ update,
-                      float alpha) {
+                      const float* __restrict__ lr, float scale) {
+  const float alpha = -*lr * scale;
 #pragma unroll 4
   CUDA_1D_KERNEL_LOOP(i, values_elem_cnt) {
     const uint64_t key_id = i / value_length;
@@ -294,7 +295,8 @@ FusedHalfUpdateKernel(uint32_t value_length, Elem* __restrict__ cache_values,
 template<typename Elem, typename Index>
 __global__ typename std::enable_if<!std::is_same<Elem, float>::value, void>::type
 FusedHalfUpdateKernel(uint32_t value_length, Elem* cache_values, uint32_t values_elem_cnt,
-                      const Index* context, const Elem* values, const half* update, float alpha) {
+                      const Index* context, const Elem* values, const half* update, const float* lr,
+                      float scale) {
   __trap();
 }
 
@@ -447,8 +449,8 @@ class CacheImpl : public Cache {
   void Put(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
            uint32_t* n_evicted, void* evicted_keys, void* evicted_values) override;
   void FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
-                          const void* update, float alpha, uint32_t* n_evicted, void* evicted_keys,
-                          void* evicted_values) override;
+                          const void* update, const float* lr, float scale, uint32_t* n_evicted,
+                          void* evicted_keys, void* evicted_values) override;
   void Dump(ep::Stream* stream, uint64_t start_key_index, uint64_t end_key_index,
             uint32_t* n_dumped, void* keys, void* values) override;
 
@@ -531,9 +533,9 @@ void CacheImpl<Key, Elem, Index>::Put(ep::Stream* stream, uint32_t n_keys, const
 template<typename Key, typename Elem, typename Index>
 void CacheImpl<Key, Elem, Index>::FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys,
                                                      const void* keys, const void* values,
-                                                     const void* update, float alpha,
-                                                     uint32_t* n_evicted, void* evicted_keys,
-                                                     void* evicted_values) {
+                                                     const void* update, const float* lr,
+                                                     float scale, uint32_t* n_evicted,
+                                                     void* evicted_keys, void* evicted_values) {
   if (!std::is_same<Elem, float>::value) { UNIMPLEMENTED(); }
   OF_CUDA_CHECK(
       cudaMemsetAsync(n_evicted, 0, sizeof(uint32_t), stream->As<ep::CudaStream>()->cuda_stream()));
@@ -543,7 +545,7 @@ void CacheImpl<Key, Elem, Index>::FusedHalfUpdatePut(ep::Stream* stream, uint32_
   const uint32_t values_elem_cnt = n_keys * num_elem_per_value_;
   RUN_CUDA_KERNEL((FusedHalfUpdateKernel<Elem, Index>), stream, values_elem_cnt,
                   num_elem_per_value_, values_, values_elem_cnt, encoding_buffer_,
-                  static_cast<const Elem*>(values), static_cast<const half*>(update), alpha);
+                  static_cast<const Elem*>(values), static_cast<const half*>(update), lr, scale);
 }
 template<typename Key, typename Elem, typename Index>
 void CacheImpl<Key, Elem, Index>::Dump(ep::Stream* stream, uint64_t start_key_index,
