@@ -217,11 +217,12 @@ __global__ void EncodeLookupKernel(uint32_t value_length, const Elem* cache_valu
 }
 
 template<typename Key, typename Elem, typename Index, uint32_t block_size>
-__global__ void EncodeLookupMaskKernel(uint32_t value_length, const Elem* cache_values,
-                                       uint32_t values_elem_cnt, const Key* keys,
-                                       const Index* context, Elem* values, uint8_t* mask,
-                                       const size_t capacity, Key* table_keys,
-                                       Index* table_indices) {
+__global__ void EncodeLookupMaskKernel(uint32_t value_length, const Elem* __restrict__ cache_values,
+                                       uint32_t values_elem_cnt, const Key* __restrict__ keys,
+                                       const Index* __restrict__ context, Elem* __restrict__ values,
+                                       uint8_t* __restrict__ mask, const size_t capacity,
+                                       Key* __restrict__ table_keys,
+                                       Index* __restrict__ table_indices) {
   constexpr uint32_t warp_size = 32;
   constexpr uint32_t n_warp_per_block = block_size / warp_size;
   const uint32_t warp_id = threadIdx.x / warp_size;
