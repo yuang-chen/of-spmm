@@ -90,6 +90,8 @@ class CacheKeyValueStoreImpl : public KeyValueStore {
 
   void Get(ep::Stream* stream, uint32_t num_keys, const void* keys, void* values,
            uint32_t* n_missing, uint32_t* missing_indices) override;
+  void Get(ep::Stream* stream, uint32_t num_keys, const void* keys, void* values,
+           uint8_t* mask) override;
   void Put(ep::Stream* stream, uint32_t num_keys, const void* keys, const void* values) override;
   bool SnapshotExists(const std::string& name) override;
   void LoadSnapshot(const std::string& name) override;
@@ -145,6 +147,18 @@ void CacheKeyValueStoreImpl<Key, Elem>::Get(ep::Stream* stream, uint32_t num_key
   RUN_CUDA_KERNEL((PostStoreGetKernel<Key, Elem>), stream, num_cache_missing * num_elems_per_value_,
                   num_cache_missing, num_store_missing, num_elems_per_value_, indices_buffer0_,
                   indices_buffer1_, values_buffer_, static_cast<Elem*>(values), missing_indices);
+}
+
+template<typename Key, typename Elem>
+void CacheKeyValueStoreImpl<Key, Elem>::Get(ep::Stream* stream, uint32_t num_keys, const void* keys,
+                                            void* values, uint8_t* mask) {
+  std::lock_guard<std::recursive_mutex> lock(mutex_);
+  if (cache_->Policy() == CacheOptions::Policy::kFull) {
+    cache_->Get(stream, num_keys, keys, values, mask);
+    return;
+  } else {
+    UNIMPLEMENTED();
+  }
 }
 
 template<typename Key, typename Elem>

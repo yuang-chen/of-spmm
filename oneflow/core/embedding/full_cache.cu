@@ -216,6 +216,48 @@ __global__ void EncodeLookupKernel(uint32_t value_length, const Elem* cache_valu
   }
 }
 
+template<typename Key, typename Elem, typename Index, uint32_t block_size>
+__global__ void EncodeLookupMaskKernel(uint32_t value_length, const Elem* cache_values,
+                                       uint32_t values_elem_cnt, const Key* keys,
+                                       const Index* context, Elem* values, uint8_t* mask,
+                                       const size_t capacity, Key* table_keys,
+                                       Index* table_indices) {
+  constexpr uint32_t warp_size = 32;
+  constexpr uint32_t n_warp_per_block = block_size / warp_size;
+  const uint32_t warp_id = threadIdx.x / warp_size;
+  const uint32_t lane_id = threadIdx.x % warp_size;
+  const uint32_t global_warp_id = blockIdx.x * n_warp_per_block + warp_id;
+  const uint32_t global_n_warp = gridDim.x * n_warp_per_block;
+  const uint32_t n_keys = values_elem_cnt / value_length;
+  __shared__ Key batch_keys[n_warp_per_block][warp_size];
+  __shared__ Index batch_row_ids[n_warp_per_block][warp_size];
+  for (uint32_t batch_start = global_warp_id * warp_size; batch_start < n_keys;
+       batch_start += global_n_warp * warp_size) {
+    const uint32_t batch_n_key = min(n_keys - batch_start, warp_size);
+    const uint32_t key_offset = batch_start + lane_id;
+    if (key_offset < n_keys) {
+      const Key key = keys[batch_start + lane_id];
+      const uint64_t hash = FullCacheHash()(key);
+      Index row;
+      GetOne<Key, Index>(capacity, table_keys, table_indices, key, hash, &row);
+      batch_row_ids[warp_id][lane_id] = row;
+      mask[key_offset] = row > 0;
+    }
+    __syncwarp();
+    for (int i = 0; i < batch_n_key; ++i) {
+      const Key key = batch_keys[warp_id][i];
+      const Index row = batch_row_ids[warp_id][i];
+      if (row == 0) { continue; }
+#pragma unroll 4
+      for (int col = lane_id; col < value_length; col += warp_size) {
+        values[(batch_start + i) * value_length + col] =
+            cache_values[(row - 1) * value_length + col];
+      }
+    }
+    __syncwarp();
+  }
+}
+
 template<typename Elem, typename Index>
 __global__ void UpdateKernel(uint32_t value_length, Elem* cache_values, uint32_t values_elem_cnt,
                              const Index* context, const Elem* values) {
@@ -371,6 +413,9 @@ class CacheImpl : public Cache {
   void Get(ep::Stream* stream, uint32_t n_keys, const void* keys, void* values, uint32_t* n_missing,
            void* missing_keys, uint32_t* missing_indices) override;
 
+  void Get(ep::Stream* stream, uint32_t n_keys, const void* keys, void* values,
+           uint8_t* mask) override;
+
   void Put(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
            uint32_t* n_evicted, void* evicted_keys, void* evicted_values) override;
 
@@ -422,6 +467,21 @@ void CacheImpl<Key, Elem, Index>::Get(ep::Stream* stream, uint32_t n_keys, const
           encoding_buffer_, static_cast<Elem*>(values), n_missing, static_cast<Key*>(missing_keys),
           missing_indices, encoder_.TableCapacity(), encoder_.table_keys(),
           encoder_.table_indices());
+}
+
+template<typename Key, typename Elem, typename Index>
+void CacheImpl<Key, Elem, Index>::Get(ep::Stream* stream, uint32_t n_keys, const void* keys,
+                                      void* values, uint8_t* mask) {
+  if (n_keys == 0) { return; }
+  CHECK_LE(n_keys, max_query_length_);
+  constexpr uint32_t block_size = 128;
+  uint32_t grid_size = (n_keys + block_size - 1) / block_size;
+  const uint32_t values_elem_cnt = n_keys * num_elem_per_value_;
+  EncodeLookupMaskKernel<Key, Elem, Index, block_size>
+      <<<grid_size, block_size, 0, stream->As<ep::CudaStream>()->cuda_stream()>>>(
+          num_elem_per_value_, values_, values_elem_cnt, static_cast<const Key*>(keys),
+          encoding_buffer_, static_cast<Elem*>(values), mask, encoder_.TableCapacity(),
+          encoder_.table_keys(), encoder_.table_indices());
 }
 
 template<typename Key, typename Elem, typename Index>
