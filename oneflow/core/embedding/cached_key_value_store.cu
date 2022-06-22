@@ -94,7 +94,7 @@ class CacheKeyValueStoreImpl : public KeyValueStore {
            uint8_t* mask) override;
   void Put(ep::Stream* stream, uint32_t num_keys, const void* keys, const void* values) override;
   void FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
-                          const void* update, float alpha);
+                          const void* update, float alpha) override;
   bool SnapshotExists(const std::string& name) override;
   void LoadSnapshot(const std::string& name) override;
   void SaveSnapshot(const std::string& name) override;
