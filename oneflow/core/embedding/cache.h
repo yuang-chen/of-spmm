@@ -19,6 +19,7 @@ limitations under the License.
 #include "oneflow/core/embedding/kv_iterator.h"
 #include "oneflow/core/common/util.h"
 #include "oneflow/core/ep/include/stream.h"
+#include "oneflow/core/common/data_type.h"
 
 namespace oneflow {
 
@@ -38,6 +39,7 @@ struct CacheOptions {
   uint64_t capacity{};
   uint32_t key_size{};
   uint32_t value_size{};
+  DataType value_type{};
   float load_factor = 0.75;
 };
 
@@ -64,6 +66,11 @@ class Cache {
   }
   virtual void Put(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
                    uint32_t* n_evicted, void* evicted_keys, void* evicted_values) = 0;
+  virtual void FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys, const void* keys,
+                                  const void* values, const void* update, float alpha,
+                                  uint32_t* n_evicted, void* evicted_keys, void* evicted_values) {
+    UNIMPLEMENTED();
+  }
   virtual void Dump(ep::Stream* stream, uint64_t start_key_index, uint64_t end_key_index,
                     uint32_t* n_dumped, void* keys, void* values) = 0;
   virtual void Clear() = 0;

@@ -272,6 +272,30 @@ __global__ void UpdateKernel(uint32_t value_length, Elem* cache_values, uint32_t
   }
 }
 
+template<typename Elem, typename Index>
+__global__ typename std::enable_if<std::is_same<Elem, float>::value, void>::type
+FusedHalfUpdateKernel(uint32_t value_length, Elem* __restrict__ cache_values,
+                      uint32_t values_elem_cnt, const Index* __restrict__ context,
+                      const Elem* __restrict__ values, const half* __restrict__ update,
+                      float alpha) {
+  CUDA_1D_KERNEL_LOOP(i, values_elem_cnt) {
+    const uint64_t key_id = i / value_length;
+    const uint64_t ctx = context[key_id];
+    if (ctx == 0) { continue; }
+    const uint64_t row_id = ctx - 1;
+    const uint64_t col_id = i - key_id * value_length;
+    const Elem elem = values[i] + static_cast<float>(update[i]) * alpha;
+    cache_values[row_id * value_length + col_id] = elem;
+  }
+}
+
+template<typename Elem, typename Index>
+__global__ typename std::enable_if<!std::is_same<Elem, float>::value, void>::type
+FusedHalfUpdateKernel(uint32_t value_length, Elem* cache_values, uint32_t values_elem_cnt,
+                      const Index* context, const Elem* values, const half* update, float alpha) {
+  __trap();
+}
+
 template<typename Key, typename Elem, typename Index>
 __global__ void DumpValueKernel(uint32_t value_length, const uint32_t* n_dumped,
                                 const Index* context, const Elem* cache_values, Elem* values) {
@@ -418,7 +442,9 @@ class CacheImpl : public Cache {
 
   void Put(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
            uint32_t* n_evicted, void* evicted_keys, void* evicted_values) override;
-
+  void FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys, const void* keys, const void* values,
+                          const void* update, float alpha, uint32_t* n_evicted, void* evicted_keys,
+                          void* evicted_values) override;
   void Dump(ep::Stream* stream, uint64_t start_key_index, uint64_t end_key_index,
             uint32_t* n_dumped, void* keys, void* values) override;
 
@@ -499,6 +525,23 @@ void CacheImpl<Key, Elem, Index>::Put(ep::Stream* stream, uint32_t n_keys, const
 }
 
 template<typename Key, typename Elem, typename Index>
+void CacheImpl<Key, Elem, Index>::FusedHalfUpdatePut(ep::Stream* stream, uint32_t n_keys,
+                                                     const void* keys, const void* values,
+                                                     const void* update, float alpha,
+                                                     uint32_t* n_evicted, void* evicted_keys,
+                                                     void* evicted_values) {
+  if (!std::is_same<Elem, float>::value) { UNIMPLEMENTED(); }
+  OF_CUDA_CHECK(
+      cudaMemsetAsync(n_evicted, 0, sizeof(uint32_t), stream->As<ep::CudaStream>()->cuda_stream()));
+  if (n_keys == 0) { return; }
+  CHECK_LE(n_keys, max_query_length_);
+  encoder_.template Encode<true>(stream, n_keys, static_cast<const Key*>(keys), encoding_buffer_);
+  const uint32_t values_elem_cnt = n_keys * num_elem_per_value_;
+  RUN_CUDA_KERNEL((FusedHalfUpdateKernel<Elem, Index>), stream, values_elem_cnt,
+                  num_elem_per_value_, values_, values_elem_cnt, encoding_buffer_,
+                  static_cast<const Elem*>(values), static_cast<const half*>(update), alpha);
+}
+template<typename Key, typename Elem, typename Index>
 void CacheImpl<Key, Elem, Index>::Dump(ep::Stream* stream, uint64_t start_key_index,
                                        uint64_t end_key_index, uint32_t* n_dumped, void* keys,
                                        void* values) {
@@ -516,7 +559,9 @@ void CacheImpl<Key, Elem, Index>::Clear() {
 
 template<typename Key, typename Index>
 std::unique_ptr<Cache> DispatchValueType(const CacheOptions& options) {
-  if (options.value_size % sizeof(ulonglong2) == 0) {
+  if (options.value_type == DataType::kFloat) {
+    return std::unique_ptr<Cache>(new CacheImpl<Key, float, Index>(options));
+  } else if (options.value_size % sizeof(ulonglong2) == 0) {
     return std::unique_ptr<Cache>(new CacheImpl<Key, ulonglong2, Index>(options));
   } else if (options.value_size % sizeof(uint64_t) == 0) {
     return std::unique_ptr<Cache>(new CacheImpl<Key, uint64_t, Index>(options));
