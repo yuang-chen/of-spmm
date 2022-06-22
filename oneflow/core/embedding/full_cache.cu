@@ -278,6 +278,7 @@ FusedHalfUpdateKernel(uint32_t value_length, Elem* __restrict__ cache_values,
                       uint32_t values_elem_cnt, const Index* __restrict__ context,
                       const Elem* __restrict__ values, const half* __restrict__ update,
                       float alpha) {
+#pragma unroll 4
   CUDA_1D_KERNEL_LOOP(i, values_elem_cnt) {
     const uint64_t key_id = i / value_length;
     const uint64_t ctx = context[key_id];
