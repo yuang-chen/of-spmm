@@ -186,7 +186,6 @@ void CacheKeyValueStoreImpl<Key, Elem>::FusedHalfUpdatePut(ep::Stream* stream, u
     UNIMPLEMENTED();
   }
   synced_ = false;
-  auto cuda_stream = stream->As<ep::CudaStream>();
   cache_->FusedHalfUpdatePut(stream, num_keys, keys, values, update, alpha, num_buffer_,
                              keys_buffer_, values_buffer_);
 }
