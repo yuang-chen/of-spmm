@@ -539,8 +539,9 @@ void CacheImpl<Key, Elem, Index, pack_size>::Put(ep::Stream* stream, uint32_t n_
   CHECK_LE(n_keys, max_query_length_);
   encoder_.template Encode<true>(stream, n_keys, static_cast<const Key*>(keys), encoding_buffer_);
   const uint32_t values_elem_cnt = n_keys * num_elem_per_value_;
-  RUN_CUDA_KERNEL((UpdateKernel<Elem, Index>), stream, values_elem_cnt, num_elem_per_value_,
-                  values_, values_elem_cnt, encoding_buffer_, static_cast<const Elem*>(values));
+  RUN_CUDA_KERNEL((UpdateKernel<Elem, Index, pack_size>), stream, values_elem_cnt,
+                  num_elem_per_value_, values_, values_elem_cnt, encoding_buffer_,
+                  static_cast<const Elem*>(values));
 }
 
 template<typename Key, typename Elem, typename Index, size_t pack_size>
