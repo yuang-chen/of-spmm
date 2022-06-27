@@ -301,7 +301,7 @@ FusedHalfUpdateKernel(uint32_t value_length, Elem* __restrict__ cache_values,
     const uint64_t ctx = context[key_id];
     if (ctx == 0) { continue; }
     const uint64_t row_id = ctx - 1;
-    const uint64_t col_id = i - key_id * value_length;
+    const uint64_t col_id = i - key_id * packed_elem_cnt;
     Pack<Elem, pack_size> m = packed_values[i];
     Pack<half, pack_size> u = packed_update[i];
     for (size_t j = 0; j < pack_size; ++j) { m.elem[j] += static_cast<Elem>(u.elem[j]) * alpha; }
