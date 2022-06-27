@@ -284,26 +284,32 @@ __global__ void UpdateKernel(uint32_t value_length, Elem* cache_values, uint32_t
   }
 }
 
-template<typename Elem, typename Index>
+template<typename Elem, typename Index, size_t pack_size>
 __global__ typename std::enable_if<std::is_same<Elem, float>::value, void>::type
 FusedHalfUpdateKernel(uint32_t value_length, Elem* __restrict__ cache_values,
                       uint32_t values_elem_cnt, const Index* __restrict__ context,
                       const Elem* __restrict__ values, const half* __restrict__ update,
                       const float* __restrict__ lr, float scale) {
+  const int packed_values_elem_cnt = values_elem_cnt / pack_size;
+  const uint32_t packed_elem_cnt = value_length / pack_size;
+  auto* packed_cache_values = reinterpret_cast<Pack<Elem, pack_size>*>(cache_values);
+  auto* packed_values = reinterpret_cast<const Pack<Elem, pack_size>*>(values);
+  auto* packed_update = reinterpret_cast<const Pack<half, pack_size>*>(update);
   const float alpha = -*lr * scale;
-#pragma unroll 4
-  CUDA_1D_KERNEL_LOOP(i, values_elem_cnt) {
-    const uint64_t key_id = i / value_length;
+  CUDA_1D_KERNEL_LOOP(i, packed_values_elem_cnt) {
+    const uint64_t key_id = i / packed_elem_cnt;
     const uint64_t ctx = context[key_id];
     if (ctx == 0) { continue; }
     const uint64_t row_id = ctx - 1;
     const uint64_t col_id = i - key_id * value_length;
-    const Elem elem = values[i] + static_cast<float>(update[i]) * alpha;
-    cache_values[row_id * value_length + col_id] = elem;
+    Pack<Elem, pack_size> m = packed_values[i];
+    Pack<half, pack_size> u = packed_update[i];
+    for (size_t j = 0; j < pack_size; ++j) { m.elem[j] += static_cast<Elem>(u.elem[j]) * alpha; }
+    packed_cache_values[row_id * packed_elem_cnt + col_id] = m;
   }
 }
 
-template<typename Elem, typename Index>
+template<typename Elem, typename Index, size_t pack_size>
 __global__ typename std::enable_if<!std::is_same<Elem, float>::value, void>::type
 FusedHalfUpdateKernel(uint32_t value_length, Elem* cache_values, uint32_t values_elem_cnt,
                       const Index* context, const Elem* values, const half* update, const float* lr,
@@ -539,7 +545,7 @@ void CacheImpl<Key, Elem, Index, pack_size>::Put(ep::Stream* stream, uint32_t n_
   CHECK_LE(n_keys, max_query_length_);
   encoder_.template Encode<true>(stream, n_keys, static_cast<const Key*>(keys), encoding_buffer_);
   const uint32_t values_elem_cnt = n_keys * num_elem_per_value_;
-  RUN_CUDA_KERNEL((UpdateKernel<Elem, Index, pack_size>), stream, values_elem_cnt,
+  RUN_CUDA_KERNEL((UpdateKernel<Elem, Index, pack_size>), stream, values_elem_cnt / pack_size,
                   num_elem_per_value_, values_, values_elem_cnt, encoding_buffer_,
                   static_cast<const Elem*>(values));
 }
@@ -555,9 +561,10 @@ void CacheImpl<Key, Elem, Index, pack_size>::FusedHalfUpdatePut(
   CHECK_LE(n_keys, max_query_length_);
   encoder_.template Encode<true>(stream, n_keys, static_cast<const Key*>(keys), encoding_buffer_);
   const uint32_t values_elem_cnt = n_keys * num_elem_per_value_;
-  RUN_CUDA_KERNEL((FusedHalfUpdateKernel<Elem, Index>), stream, values_elem_cnt,
-                  num_elem_per_value_, values_, values_elem_cnt, encoding_buffer_,
-                  static_cast<const Elem*>(values), static_cast<const half*>(update), lr, scale);
+  RUN_CUDA_KERNEL((FusedHalfUpdateKernel<Elem, Index, pack_size>), stream,
+                  values_elem_cnt / pack_size, num_elem_per_value_, values_, values_elem_cnt,
+                  encoding_buffer_, static_cast<const Elem*>(values),
+                  static_cast<const half*>(update), lr, scale);
 }
 template<typename Key, typename Elem, typename Index, size_t pack_size>
 void CacheImpl<Key, Elem, Index, pack_size>::Dump(ep::Stream* stream, uint64_t start_key_index,
