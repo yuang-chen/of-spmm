@@ -116,13 +116,13 @@ def _test_linear_train_graph_with_zero(test_case, zero_stage=1):
 
 def _test_linear_train_graph_2d_with_zero(test_case, zero_stage=1):
     def train_with_graph(iter_num=1):
-        P = flow.placement("cuda", ranks=[[0, 1], [2, 3]])
+        P = flow.placement("cpu", ranks=[[0], [1]])
         B = flow.sbp.broadcast
         S0 = flow.sbp.split(0)
         S1 = flow.sbp.split(1)
 
         def get_mixed_linear():
-            linear_dp_mp = flow.nn.Linear(800, 400, bias=False)
+            linear_dp_mp = flow.nn.Linear(800, 800, bias=False)
             linear_dp_mp = linear_dp_mp.to_global(placement=P, sbp=[B, S0])
             flow.nn.init.constant_(linear_dp_mp.weight, 1.068758)
 
@@ -182,21 +182,7 @@ def _test_linear_train_graph_2d_with_zero(test_case, zero_stage=1):
                 loss.backward()
                 return loss
 
-        class LinearEvalGraph2DWithZeRO(flow.nn.Graph):
-            def __init__(self):
-                super().__init__()
-                self.mixed_linear0 = mixed_linear0
-                self.mixed_linear1 = mixed_linear1
-
-                self.config.enable_amp(True)
-
-            def build(self, x):
-                out = self.mixed_linear0(x)
-                out = self.mixed_linear1(out)
-                return out
-
         linear_t_g = LinearTrainGraph2DWithZeRO()
-        linear_e_g = LinearEvalGraph2DWithZeRO()
 
         def one_train_iter():
             out = linear_t_g(x)
@@ -214,36 +200,11 @@ def _test_linear_train_graph_2d_with_zero(test_case, zero_stage=1):
                 state.origin.sbp, (oneflow.sbp.split(dim=0), oneflow.sbp.split(dim=0))
             )
 
-        # In evaluation graph, paramters's sbp are flow.sbp.split(0).
-        # But their consumer will consum them as flow.sbp.broadcast.
-        one_eval_iter()
-
     iter_num = 1
     graph_check_list = train_with_graph(iter_num)
 
-
-@unittest.skipIf(os.getenv("ONEFLOW_TEST_CPU_ONLY"), "only test cpu cases")
 @flow.unittest.skip_unless_1n2d()
-class TestLinearTrainGraphWithZeRO(oneflow.unittest.TestCase):
-    def test_linear_train_graph_with_zero_1(test_case):
-        _test_linear_train_graph_with_zero(test_case, 1)
-
-    def test_linear_train_graph_with_zero_2(test_case):
-        _test_linear_train_graph_with_zero(test_case, 2)
-
-    def test_linear_train_graph_with_zero_3(test_case):
-        _test_linear_train_graph_with_zero(test_case, 3)
-
-
-@unittest.skipIf(os.getenv("ONEFLOW_TEST_CPU_ONLY"), "only test cpu cases")
-@flow.unittest.skip_unless_1n4d()
 class TestLinearTrainGraph2DWithZeRO(oneflow.unittest.TestCase):
-    def test_linear_train_graph_2d_with_zero_3(test_case):
-        _test_linear_train_graph_2d_with_zero(test_case, 3)
-
-    def test_linear_train_graph_2d_with_zero_2(test_case):
-        _test_linear_train_graph_2d_with_zero(test_case, 2)
-
     def test_linear_train_graph_2d_with_zero_1(test_case):
         _test_linear_train_graph_2d_with_zero(test_case, 1)
 
