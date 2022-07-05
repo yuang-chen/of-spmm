@@ -205,16 +205,32 @@ int64_t GetPaddedDim(int64_t dim) {
   return padded_dim;
 }
 
+using IDX = uint32_t;  // TODO: set template IDX
+
 template<typename T, int32_t max_in>
 struct DotFwdParam {
   const T* in[max_in];
   int32_t in_feature_dim[max_in];
   int32_t dim_start_offset[max_in];
+  const T* sparse_feature;
+  const IDX* sparse_indices;
+  int32_t sparse_dim;
+  int32_t sparse_dim_start;
   int32_t features_dim;
   const T* output_concat;
   int32_t output_concat_size;
   T* out;
   int32_t num_in;
+  std::string Dump() {
+    std::string return_str = "sparse_dim " + std::to_string(sparse_dim) + " sparse_dim_start"
+                             + std::to_string(sparse_dim_start) + " output_concat_size"
+                             + std::to_string(output_concat_size) + " sparse_dim"
+                             + std::to_string(sparse_dim) + " in_feature_dim"
+                             + std::to_string(in_feature_dim[0]) + " dim_start_offset"
+                             + std::to_string(dim_start_offset[0]) + " features_dim"
+                             + std::to_string(features_dim) + " num_in" + std::to_string(num_in);
+    return return_str;
+  }
 };
 
 #if __CUDA_ARCH__ >= 700
@@ -293,7 +309,13 @@ __global__ void DotFeatureInteractionWmmaImpl(
   const int output_concat_size = param.output_concat_size;
   const T* batch_output_concat =
       (param.output_concat) ? (param.output_concat + batch_idx * output_concat_size) : nullptr;
+  const IDX* batch_sparse_indices =
+      (param.sparse_indices) ? (param.sparse_indices + batch_idx * param.sparse_dim) : nullptr;
+  const Pack<T, pack_size>* sparse_feature_pack =
+      (param.sparse_feature) ? reinterpret_cast<const Pack<T, pack_size>*>(param.sparse_feature)
+                             : nullptr;
   for (int col = threadIdx.x; col < vector_num_pack; col += blockDim.x) {
+// load dense feature to shared_mem
 #pragma unroll
     for (int i = 0; i < max_in; ++i) {
       if (i >= param.num_in) { break; }
@@ -313,6 +335,22 @@ __global__ void DotFeatureInteractionWmmaImpl(
           }
           buf_pack[buf_row * in_shared_mem_cols_num_pack + col] = pack_in_val;
         }
+      }
+    }
+    // load sparse feature to shared_mem
+    for (int j = threadIdx.y * kUnrollDim; j < param.sparse_dim; j += blockDim.y * kUnrollDim) {
+#pragma unroll
+      for (int k = 0; k < kUnrollDim; ++k) {
+        int in_row = j + k;
+        if (in_row >= param.sparse_dim) { break; }
+        int buf_row = param.sparse_dim_start + in_row;
+        int sparse_in_row = batch_sparse_indices[in_row];
+        Pack<T, pack_size> pack_in_val = sparse_feature_pack[sparse_in_row * vector_num_pack + col];
+#pragma unroll
+        for (int t = 0; t < pack_size; ++t) {
+          pack_in_val.elem[t] = wmma.Convert(pack_in_val.elem[t]);
+        }
+        buf_pack[buf_row * in_shared_mem_cols_num_pack + col] = pack_in_val;
       }
     }
   }
@@ -432,11 +470,26 @@ struct DotBwdParam {
   const T* in[max_in];
   T* in_grad[max_in];
   T* output_concat_grad;
+  const T* sparse_feature;
+  const IDX* sparse_indices;
+  int32_t sparse_dim;
+  int32_t sparse_dim_start;
+  T* sparse_feature_grad;
   int32_t output_concat_size;
   int32_t in_feature_dim[max_in];
   int32_t dim_start_offset[max_in];
   int32_t features_dim;
   int32_t num_in;
+  std::string Dump() {
+    std::string return_str = "sparse_dim " + std::to_string(sparse_dim) + " sparse_dim_start"
+                             + std::to_string(sparse_dim_start) + " output_concat_size"
+                             + std::to_string(output_concat_size) + " sparse_dim_start"
+                             + std::to_string(sparse_dim) + " in_feature_dim"
+                             + std::to_string(in_feature_dim[0]) + " dim_start_offset"
+                             + std::to_string(dim_start_offset[0]) + " features_dim"
+                             + std::to_string(features_dim) + " num_in" + std::to_string(num_in);
+    return return_str;
+  }
 };
 
 template<typename T, typename ComputeType, int32_t max_in, int32_t pack_size, int mn_tile_dim,
@@ -466,6 +519,14 @@ __global__ void DotFeatureInteractionBackwardWmmaImpl(
   T* batch_output_concat_grad = (param.output_concat_grad)
                                     ? (param.output_concat_grad + batch_idx * output_concat_size)
                                     : nullptr;
+  const IDX* batch_sparse_indices =
+      (param.sparse_indices) ? (param.sparse_indices + batch_idx * param.sparse_dim) : nullptr;
+  const Pack<T, pack_size>* sparse_feature_pack =
+      (param.sparse_feature) ? reinterpret_cast<const Pack<T, pack_size>*>(param.sparse_feature)
+                             : nullptr;
+  // TODO: refine, memset
+  half2* sparse_feature_grad_pack = reinterpret_cast<half2*>(param.sparse_feature_grad);
+
   int features_dim = param.features_dim;
   // 1.split out_grad to concat_out_grad and matrix_out_grad buf
   int thread_id = threadIdx.x + threadIdx.y * blockDim.x;
@@ -520,6 +581,22 @@ __global__ void DotFeatureInteractionBackwardWmmaImpl(
         }
       }
     }
+    // load sparse feature to shared_mem
+    for (int j = threadIdx.y * kUnrollDim; j < param.sparse_dim; j += blockDim.y * kUnrollDim) {
+#pragma unroll
+      for (int k = 0; k < kUnrollDim; ++k) {
+        int in_row = j + k;
+        if (in_row >= param.sparse_dim) { break; }
+        int buf_row = param.sparse_dim_start + in_row;
+        int sparse_in_row = batch_sparse_indices[in_row];
+        Pack<T, pack_size> pack_in_val = sparse_feature_pack[sparse_in_row * vector_num_pack + col];
+#pragma unroll
+        for (int t = 0; t < pack_size; ++t) {
+          pack_in_val.elem[t] = wmma.Convert(pack_in_val.elem[t]);
+        }
+        in_buf_pack[buf_row * in_shared_mem_cols_num_pack + col] = pack_in_val;
+      }
+    }
   }
   Pack<T, pack_size> zero;
 #pragma unroll
@@ -559,6 +636,7 @@ __global__ void DotFeatureInteractionBackwardWmmaImpl(
   __syncthreads();
 
   // 4.split in_grad buf to dx
+  // shared_mem to dense dx
   for (int col = threadIdx.x; col < vector_num_pack; col += blockDim.x) {
 #pragma unroll
     for (int i = 0; i < max_in; ++i) {
@@ -584,6 +662,28 @@ __global__ void DotFeatureInteractionBackwardWmmaImpl(
       }
     }
   }
+  // shared_mem to sparse dx, sparse in grad must pack 2
+  // TODO:use template
+  Pack<ComputeType, 2>* in_grad_buf_pack2 = reinterpret_cast<Pack<ComputeType, 2>*>(in_grad_buf);
+  half2* sparse_feature_grad_pack2 = reinterpret_cast<half2*>(param.sparse_feature_grad);
+  for (int col = threadIdx.x; col < vector_num_pack * 2; col += blockDim.x) {
+    for (int j = threadIdx.y * kUnrollDim; j < param.sparse_dim; j += blockDim.y * kUnrollDim) {
+#pragma unroll
+      for (int k = 0; k < kUnrollDim; ++k) {
+        int in_row = j + k;
+        if (in_row >= param.sparse_dim) { break; }
+        int buf_row = param.sparse_dim_start + in_row;
+        int sparse_in_row = batch_sparse_indices[in_row];
+        half2 grad_val;
+        Pack<ComputeType, 2> buf_grad_val =
+            in_grad_buf_pack2[buf_row * in_shared_mem_cols / 2 + col];
+        grad_val.x = static_cast<T>(buf_grad_val.elem[0]);
+        grad_val.y = static_cast<T>(buf_grad_val.elem[1]);
+        atomicAdd(sparse_feature_grad_pack2 + sparse_in_row * vector_num_pack * 2 + col, grad_val);
+      }
+    }
+  }
+
 #else
   __trap();
 #endif  // __CUDA_ARCH__ >= 700
@@ -656,6 +756,22 @@ bool DispatchFeatureInteractionDotPackSize(user_op::KernelComputeContext* ctx,
     param.dim_start_offset[i] = features_concated_dim;
     features_concated_dim += param.in_feature_dim[i];
   }
+  if (ctx->has_input("sparse_feature", 0)) {
+    CHECK(ctx->has_input("sparse_indices", 0));
+    const user_op::Tensor* sparse_feature = ctx->Tensor4ArgNameAndIndex("sparse_feature", 0);
+    const user_op::Tensor* sparse_indices = ctx->Tensor4ArgNameAndIndex("sparse_indices", 0);
+    param.sparse_feature = sparse_feature->dptr<T>();
+    param.sparse_indices =
+        reinterpret_cast<const IDX*>(sparse_indices->dptr());  // TODO: IDX template
+    param.sparse_dim = ctx->TensorDesc4ArgNameAndIndex("sparse_indices", 0)->shape().At(1);
+    param.sparse_dim_start = features_concated_dim;
+    features_concated_dim += param.sparse_dim;
+  } else {
+    param.sparse_feature = nullptr;
+    param.sparse_indices = nullptr;
+    param.sparse_dim = 0;
+    param.sparse_dim_start = 0;
+  }
   const int64_t concated_padded_dim = GetPaddedDim(features_concated_dim);
   param.features_dim = features_concated_dim;
   if (ctx->has_input("output_concat", 0)) {
@@ -701,6 +817,29 @@ bool DispatchFeatureInteractionDotBackwardPackSize(user_op::KernelComputeContext
     param.in_feature_dim[i] = ctx->TensorDesc4ArgNameAndIndex("features", i)->shape().At(1);
     param.dim_start_offset[i] = features_concated_dim;
     features_concated_dim += param.in_feature_dim[i];
+  }
+  if (ctx->has_input("sparse_feature", 0)) {
+    CHECK(ctx->has_input("sparse_indices", 0));
+    const user_op::Tensor* sparse_feature = ctx->Tensor4ArgNameAndIndex("sparse_feature", 0);
+    const user_op::Tensor* sparse_indices = ctx->Tensor4ArgNameAndIndex("sparse_indices", 0);
+    param.sparse_feature = sparse_feature->dptr<T>();
+    param.sparse_indices =
+        reinterpret_cast<const IDX*>(sparse_indices->dptr());  // TODO: IDX template
+    param.sparse_dim = ctx->TensorDesc4ArgNameAndIndex("sparse_indices", 0)->shape().At(1);
+    param.sparse_dim_start = features_concated_dim;
+    features_concated_dim += param.sparse_dim;
+    param.sparse_feature_grad =
+        ctx->Tensor4ArgNameAndIndex("sparse_feature_grad", 0)->mut_dptr<T>();
+    OF_CUDA_CHECK(cudaMemsetAsync(
+        param.sparse_feature_grad, 0,
+        ctx->Tensor4ArgNameAndIndex("sparse_feature_grad", 0)->shape_view().elem_cnt() * sizeof(T),
+        ctx->stream()->As<ep::CudaStream>()->cuda_stream()));
+  } else {
+    param.sparse_feature = nullptr;
+    param.sparse_indices = nullptr;
+    param.sparse_feature_grad = nullptr;
+    param.sparse_dim = 0;
+    param.sparse_dim_start = 0;
   }
   const int64_t concated_padded_dim = GetPaddedDim(features_concated_dim);
   param.features_dim = features_concated_dim;
