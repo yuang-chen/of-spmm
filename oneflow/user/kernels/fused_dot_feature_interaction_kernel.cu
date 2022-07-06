@@ -759,7 +759,7 @@ typename std::enable_if<(pack != 0), void>::type LaunchPackMemsetGpu(cudaStream_
                                                                      size_t count,
                                                                      int64_t vector_size, int64_t parallel_num) {
   MemsetGpu<T, pack><<<BlocksNum4ThreadsNum(count / pack), kCudaThreadsNumPerBlock, 0, stream>>>(
-      vector_size, num_valid, ptr);
+      parallel_num, vector_size, num_valid, ptr);
 }
 
 template<typename T, size_t pack>
