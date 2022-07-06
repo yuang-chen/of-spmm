@@ -780,17 +780,13 @@ void LaunchMemset(cudaStream_t stream, size_t count, int64_t vector_size, int64_
     LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size,
                                            parallel_num);
   } else if (uintptr % 8 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size,
-                                           parallel_num);
+    LaunchPackMemsetGpu<T, 8 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else if (uintptr % 4 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size,
-                                           parallel_num);
+    LaunchPackMemsetGpu<T, 4 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else if (uintptr % 2 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size,
-                                           parallel_num);
+    LaunchPackMemsetGpu<T, 2 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size,
-                                           parallel_num);
+    LaunchPackMemsetGpu<T, 1 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   }
 }
 
@@ -1118,6 +1114,7 @@ class FusedDotFeatureInteractionPoolingSumKernel final : public user_op::OpKerne
  private:
   using user_op::OpKernel::Compute;
   void Compute(user_op::KernelComputeContext* ctx) const override {
+    CHECK(!ctx->has_input("sparse_feature", 0)) << "pooling sum, sparse_feature is not supported. ";
     const int input_size = ctx->input_size("features");
     if (input_size == 1) {
       DispatchFeatureInteractionSumInputSize<T, 1>(ctx, input_size);
@@ -1190,6 +1187,7 @@ class FusedDotFeatureInteractionKernel final : public user_op::OpKernel {
       bool success = TryLaunchTensorCoreDotKernel<T>(ctx);
       if (success == true) { return; }
     }
+    CHECK(!ctx->has_input("sparse_feature", 0)) << "sparse_feature is not supported. ";
     user_op::Tensor* tmp_buffer = ctx->Tensor4ArgNameAndIndex("tmp_buffer", 0);
     const int64_t batch_size = out->shape_view().At(0);
     int64_t features_concated_dim = 0;
@@ -1296,6 +1294,7 @@ class FusedDotFeatureInteractionGradKernel final : public user_op::OpKernel {
       bool success = TryLaunchTensorCoreDotBackwardKernel<T>(ctx);
       if (success == true) { return; }
     }
+    CHECK(!ctx->has_input("sparse_feature", 0)) << "sparse_feature is not supported. ";
     const int64_t batch_size = dy->shape_view().At(0);
     int64_t features_concated_dim = 0;
     for (int32_t i = 0; i < ctx->output_size("features_grad"); ++i) {
