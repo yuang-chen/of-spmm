@@ -134,11 +134,24 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
             }
             UpdateConsumerOpConf(grad_out_node, last_feature_grad_lbi, sparse_feature_grad_lbn,
                                  &op_name2op_conf);
+            auto bool_attr = ::oneflow::AttrValue();
+            bool_attr.set_at_bool(true);
+            OperatorConf& embedding_gradient_shuffle_op_conf =
+                op_name2op_conf.at(grad_out_node->op().op_name());
+            (*(embedding_gradient_shuffle_op_conf.mutable_user_conf()
+                   ->mutable_attr()))["skip_first_scatter"] = bool_attr;
           }
         }
       }
       job_builder->MutOpsOnlyOnce({new_op_conf});
     }
+    auto bool_attr = ::oneflow::AttrValue();
+    bool_attr.set_at_bool(true);
+    OperatorConf new_embedding_shuffle_conf = op_node->op().op_conf();
+    (*(new_embedding_shuffle_conf.mutable_user_conf()->mutable_attr()))["skip_last_gather"] =
+        bool_attr;
+    job_builder->MutOpsOnlyOnce({new_embedding_shuffle_conf});
+
     for (const auto& pair : op_name2op_conf) { job_builder->MutOpsOnlyOnce({pair.second}); }
   });
 
