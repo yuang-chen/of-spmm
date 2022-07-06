@@ -955,6 +955,7 @@ class EmbeddingShuffleKernel final : public user_op::OpKernel {
     const int64_t num_ids = inverse_unique_partition_indices->shape_view().elem_cnt();
     const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
     const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
+    const bool skip_last_gather = ctx->Attr<bool>("skip_last_gather");
     bool enable_quantized_comm_env_var =
         ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_ENABLE_QUANTIZED_COMM", false);
     bool enable_quantized_comm = enable_quantized_comm_env_var && (embedding_size < kMaxColSize);
@@ -995,7 +996,7 @@ class EmbeddingShuffleKernel final : public user_op::OpKernel {
 
       // 2. send recv embedding, from (cur_rank_num_ids, embedding_size) to
       // (unique_partitioned_num_ids, embedding_size)
-      if (ParseBooleanFromEnv("USE_FUSE_KERNEL", false)) {
+      if (skip_last_gather) {
         ShuffleEmbeddings(cuda_stream, comm, parallel_id, parallel_num, num_ids, embedding_size,
                           data_type, host_num_unique_matrix,
                           reinterpret_cast<T*>(reverse_unique_cur_rank_embeddings),
@@ -1022,6 +1023,7 @@ class EmbeddingShuffleKernel final : public user_op::OpKernel {
         embedding_state->FreeTmpBuffer(ctx, received_embeddings);
       }
     } else {
+      CHECK(!skip_last_gather) << "when enable_quantized_comm, should not use fuse kernel.";
       // 1. quantize cur_rank_embeddings, from (num_unique, embedding_size) T to (num_unique,
       // embedding_size) int8_t, and get (num_unique,) T factor
       void* quantize_cur_rank_embeddings;  // int8_t
@@ -1397,11 +1399,11 @@ class EmbeddingGradientShuffleKernel final : public user_op::OpKernel {
       LOG(WARNING) << "Only envrionment variable ONEFLOW_ONE_EMBEDDING_ENABLE_QUANTIZED_COMM=1 and "
                       "embedding_size less equal than 1024 can use quantized communication. ";
     }
+    const bool skip_first_scatter = ctx->Attr<bool>("skip_first_scatter");
     cudaStream_t cuda_stream = ctx->stream()->As<ep::CudaStream>()->cuda_stream();
     const std::vector<uint32_t>& num_unique_matrix_vec =
         embedding_state->GetIdNumUniqueMatrix(current_iter_);
     CHECK_EQ(sizeof(IDX), sizeof(uint32_t)) << "assume sizeof(IDX) equals to sizeof(uint32_t)";
-    ;
     std::memcpy(host_num_unique_matrix, num_unique_matrix_vec.data(),
                 parallel_num * parallel_num * sizeof(IDX));
     uint32_t num_unique = embedding_state->GetIdNumUnique(current_iter_);
@@ -1423,7 +1425,7 @@ class EmbeddingGradientShuffleKernel final : public user_op::OpKernel {
           GetCudaAlignedSize(unique_partitioned_num_ids * padded_embedding_size * sizeof(T)));
 
       const T* unique_embedding_grad_ptr;
-      if (ParseBooleanFromEnv("USE_FUSE_KERNEL", false)) {
+      if (skip_first_scatter) {
         unique_embedding_grad_ptr = embedding_grad->dptr<T>();
       } else {
         UniquePartitionEmbeddingGrad(
@@ -1461,6 +1463,7 @@ class EmbeddingGradientShuffleKernel final : public user_op::OpKernel {
       embedding_state->FreeTmpBuffer(ctx, unique_partition_embedding_grad);
       embedding_state->FreeTmpBuffer(ctx, received_embedding_grad);
     } else {
+      CHECK(!skip_first_scatter) << "when enable_quantized_comm, should not use fuse kernel.";
       // 1. sum to unique grad, from (num_ids, embedding_size) to (unique_partitioned_num_ids,
       // padded_embedding_size)
       void* unique_partition_embedding_grad;  // T

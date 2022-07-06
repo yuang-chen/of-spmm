@@ -20,23 +20,6 @@ namespace oneflow {
 
 namespace {
 
-void UpdateConsumerOpConf(const OpNode* consumer, const LogicalBlobId& out,
-                          const std::string& new_out_lbn,
-                          HashMap<std::string, OperatorConf>* op_name2op_conf) {
-  const std::string& consumer_op_name = consumer->op().op_name();
-  if (op_name2op_conf->find(consumer_op_name) == op_name2op_conf->end()) {
-    (*op_name2op_conf)[consumer_op_name] = consumer->op().op_conf();
-  }
-  for (const std::string& ibn : consumer->op().input_bns()) {
-    if (consumer->op().BnInOp2Lbi(ibn) == out) {
-      OperatorConf& consumer_op_conf = op_name2op_conf->at(consumer_op_name);
-      const auto& new_val = new_out_lbn;
-      const auto& old_val = ReplaceInputLbnInOpCustomizedConf(&consumer_op_conf, ibn, new_val);
-      CHECK_EQ(GenLogicalBlobName(out), old_val);
-    }
-  }
-}
-
 bool IsUserOpWithTypeName(const OperatorConf& op_conf, const std::string& op_type_name) {
   return op_conf.has_user_conf() && op_conf.user_conf().op_type_name() == op_type_name;
 };
@@ -46,7 +29,14 @@ class FuseEmbeddingShuffleInteractionPass final : public JobPass {
   FuseEmbeddingShuffleInteractionPass() = default;
   ~FuseEmbeddingShuffleInteractionPass() override = default;
 
-  bool IsEnabled(const JobPassCtx& ctx) const { return true; }
+  bool IsEnabled(const JobPassCtx& ctx) const {
+    // if enable quantize, not support fuse kernel.
+    bool enable_quantized_comm =
+        ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_ENABLE_QUANTIZED_COMM", false);
+    bool enable_fuse_embedding_interaction =
+        ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_FUSE_EMBEDDING_INTERACTION", false);
+    return (!enable_quantized_comm && enable_fuse_embedding_interaction);
+  }
   Maybe<void> Apply(const OpGraph& op_graph, JobBuilder* job_builder) const;
 
   Maybe<void> Apply(Job* job, JobPassCtx* ctx) const override {
@@ -59,8 +49,6 @@ class FuseEmbeddingShuffleInteractionPass final : public JobPass {
 
 Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
                                                        JobBuilder* job_builder) const {
-  HashMap<std::string, OperatorConf> op_name2op_conf;
-
   op_graph.ForEachNode([&](const OpNode* op_node) {
     if (!IsUserOpWithTypeName(op_node->op().op_conf(), "embedding_shuffle")) { return; }
     if (op_node->out_edges().size() > 2) { return; }
@@ -75,6 +63,16 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
       // only support half and embedding_size % 2 == 0 fuse, because atomicAdd half is slow.
       return;
     }
+    if (op_node->LogicalBlobDesc4Lbi(GenLogicalBlobId(indices_lbn)).data_type()
+        != DataType::kUInt32) {
+      // only support indices with uint32_t dtype
+      return;
+    }
+    if (op_node->LogicalBlobDesc4Lbi(GenLogicalBlobId(num_unique_matrix_lbn)).data_type()
+        != DataType::kUInt32) {
+      // only support num_unique with uint32_t dtype
+      return;
+    }
     for (const OpEdge* out_edge : op_node->out_edges()) {
       const OpNode* consumer = out_edge->dst_node();
       if (!consumer->op().op_conf().has_user_conf()) { return; }
@@ -86,8 +84,10 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
       if (consumer_op_conf.attr<std::string>("pooling") != "none") { return; }
       int input_size = consumer_op_conf.input_size("features");
       CHECK_GT(input_size, 0);
-      // only support embeddings as last feature
-      if (consumer_op_conf.input("features", input_size - 1) != embeddings_lbn) { return; }
+      if (consumer_op_conf.input("features", input_size - 1) != embeddings_lbn) {
+        // only support embeddings as last feature
+        return;
+      }
       user_op::UserOpConfWrapperBuilder fused_op_builder(consumer_op_conf.op_name());
       const std::string& op_type_name = consumer_op_conf.op_type_name();
       fused_op_builder.OpTypeName(op_type_name)
@@ -132,14 +132,31 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
                                       "embedding_gradient_shuffle")) {
               return;
             }
-            UpdateConsumerOpConf(grad_out_node, last_feature_grad_lbi, sparse_feature_grad_lbn,
-                                 &op_name2op_conf);
+            OperatorConf new_embedding_gradient_shuffle_conf = grad_out_node->op().op_conf();
+            for (const std::string& ibn : grad_out_node->op().input_bns()) {
+              if (grad_out_node->op().BnInOp2Lbi(ibn) == last_feature_grad_lbi) {
+                const auto& new_val = sparse_feature_grad_lbn;
+                const auto& old_val = ReplaceInputLbnInOpCustomizedConf(
+                    &new_embedding_gradient_shuffle_conf, ibn, new_val);
+                CHECK_EQ(GenLogicalBlobName(last_feature_grad_lbi), old_val);
+              }
+            }
+            auto bool_attr = ::oneflow::AttrValue();
+            bool_attr.set_at_bool(true);
+            (*(new_embedding_gradient_shuffle_conf.mutable_user_conf()
+                   ->mutable_attr()))["skip_first_scatter"] = bool_attr;
+            job_builder->MutOpsOnlyOnce({new_embedding_gradient_shuffle_conf});
           }
         }
       }
       job_builder->MutOpsOnlyOnce({new_op_conf});
     }
-    for (const auto& pair : op_name2op_conf) { job_builder->MutOpsOnlyOnce({pair.second}); }
+    auto bool_attr = ::oneflow::AttrValue();
+    bool_attr.set_at_bool(true);
+    OperatorConf new_embedding_shuffle_conf = op_node->op().op_conf();
+    (*(new_embedding_shuffle_conf.mutable_user_conf()->mutable_attr()))["skip_last_gather"] =
+        bool_attr;
+    job_builder->MutOpsOnlyOnce({new_embedding_shuffle_conf});
   });
 
   return Maybe<void>::Ok();

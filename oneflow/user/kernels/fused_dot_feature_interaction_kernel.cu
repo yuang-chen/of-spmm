@@ -205,15 +205,13 @@ int64_t GetPaddedDim(int64_t dim) {
   return padded_dim;
 }
 
-using IDX = uint32_t;  // TODO: set template IDX
-
 template<typename T, int32_t max_in>
 struct DotFwdParam {
   const T* in[max_in];
   int32_t in_feature_dim[max_in];
   int32_t dim_start_offset[max_in];
   const T* sparse_feature;
-  const IDX* sparse_indices;
+  const uint32_t* sparse_indices;
   int32_t sparse_dim;
   int32_t sparse_dim_start;
   int32_t features_dim;
@@ -299,7 +297,7 @@ __global__ void DotFeatureInteractionWmmaImpl(
   const int output_concat_size = param.output_concat_size;
   const T* batch_output_concat =
       (param.output_concat) ? (param.output_concat + batch_idx * output_concat_size) : nullptr;
-  const IDX* batch_sparse_indices =
+  const uint32_t* batch_sparse_indices =
       (param.sparse_indices) ? (param.sparse_indices + batch_idx * param.sparse_dim) : nullptr;
   const Pack<T, pack_size>* sparse_feature_pack =
       (param.sparse_feature) ? reinterpret_cast<const Pack<T, pack_size>*>(param.sparse_feature)
@@ -461,7 +459,7 @@ struct DotBwdParam {
   T* in_grad[max_in];
   T* output_concat_grad;
   const T* sparse_feature;
-  const IDX* sparse_indices;
+  const uint32_t* sparse_indices;
   int32_t sparse_dim;
   int32_t sparse_dim_start;
   T* sparse_feature_grad;
@@ -516,7 +514,7 @@ __global__ void DotFeatureInteractionBackwardWmmaImpl(
   T* batch_output_concat_grad = (param.output_concat_grad)
                                     ? (param.output_concat_grad + batch_idx * output_concat_size)
                                     : nullptr;
-  const IDX* batch_sparse_indices =
+  const uint32_t* batch_sparse_indices =
       (param.sparse_indices) ? (param.sparse_indices + batch_idx * param.sparse_dim) : nullptr;
   const Pack<T, pack_size>* sparse_feature_pack =
       (param.sparse_feature) ? reinterpret_cast<const Pack<T, pack_size>*>(param.sparse_feature)
@@ -740,7 +738,8 @@ struct DotFeatureInteractionBackwardKernel {
 };
 
 template<typename T, size_t pack>
-__global__ void MemsetGpu(int64_t parallel_num, int64_t vector_size, const IDX* num_valid, T* dst) {
+__global__ void MemsetGpu(int64_t parallel_num, int64_t vector_size, const uint32_t* num_valid,
+                          T* dst) {
   size_t count = 0;
   for (int i = 0; i < parallel_num; ++i) { count += num_valid[i] * vector_size; }
   const size_t pack_count = count / pack;
@@ -755,35 +754,38 @@ __global__ void MemsetGpu(int64_t parallel_num, int64_t vector_size, const IDX* 
 
 template<typename T, size_t pack>
 typename std::enable_if<(pack != 0), void>::type LaunchPackMemsetGpu(cudaStream_t stream,
-                                                                     const IDX* num_valid, T* ptr,
-                                                                     size_t count,
-                                                                     int64_t vector_size, int64_t parallel_num) {
+                                                                     const uint32_t* num_valid,
+                                                                     T* ptr, size_t count,
+                                                                     int64_t vector_size,
+                                                                     int64_t parallel_num) {
   MemsetGpu<T, pack><<<BlocksNum4ThreadsNum(count / pack), kCudaThreadsNumPerBlock, 0, stream>>>(
       parallel_num, vector_size, num_valid, ptr);
 }
 
 template<typename T, size_t pack>
 typename std::enable_if<(pack == 0), void>::type LaunchPackMemsetGpu(cudaStream_t stream,
-                                                                     const IDX* num_valid, T* ptr,
-                                                                     size_t count,
-                                                                     int64_t vector_size, int64_t parallel_num) {
+                                                                     const uint32_t* num_valid,
+                                                                     T* ptr, size_t count,
+                                                                     int64_t vector_size,
+                                                                     int64_t parallel_num) {
   LOG(FATAL) << "wrong alignment";
 }
 
-template<typename T, typename IDX>
-void LaunchMemset(cudaStream_t stream, size_t count, int64_t vector_size, int64_t parallel_num, const IDX* num_valid,
-                  T* ptr) {
+template<typename T>
+void LaunchMemset(cudaStream_t stream, size_t count, int64_t vector_size, int64_t parallel_num,
+                  const uint32_t* num_valid, T* ptr) {
   auto uintptr = reinterpret_cast<std::uintptr_t>(ptr);
   if (uintptr % 16 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
+    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size,
+                                           parallel_num);
   } else if (uintptr % 8 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
+    LaunchPackMemsetGpu<T, 8 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else if (uintptr % 4 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
+    LaunchPackMemsetGpu<T, 4 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else if (uintptr % 2 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
+    LaunchPackMemsetGpu<T, 2 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
+    LaunchPackMemsetGpu<T, 1 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   }
 }
 
@@ -810,8 +812,8 @@ bool DispatchFeatureInteractionDotPackSize(user_op::KernelComputeContext* ctx,
     const user_op::Tensor* sparse_feature = ctx->Tensor4ArgNameAndIndex("sparse_feature", 0);
     const user_op::Tensor* sparse_indices = ctx->Tensor4ArgNameAndIndex("sparse_indices", 0);
     param.sparse_feature = sparse_feature->dptr<T>();
-    param.sparse_indices =
-        reinterpret_cast<const IDX*>(sparse_indices->dptr());  // TODO: IDX template
+    CHECK_EQ(sparse_indices->data_type(), DataType::kUInt32);
+    param.sparse_indices = reinterpret_cast<const uint32_t*>(sparse_indices->dptr());
     param.sparse_dim = ctx->TensorDesc4ArgNameAndIndex("sparse_indices", 0)->shape().At(1);
     param.sparse_dim_start = features_concated_dim;
     features_concated_dim += param.sparse_dim;
@@ -869,11 +871,15 @@ bool DispatchFeatureInteractionDotBackwardPackSize(user_op::KernelComputeContext
   }
   if (ctx->has_input("sparse_feature", 0)) {
     CHECK(ctx->has_input("sparse_indices", 0));
+    CHECK(ctx->has_input("num_valid_sparse_feature", 0));
+    CHECK(ctx->has_output("sparse_feature_grad", 0));
     const user_op::Tensor* sparse_feature = ctx->Tensor4ArgNameAndIndex("sparse_feature", 0);
     const user_op::Tensor* sparse_indices = ctx->Tensor4ArgNameAndIndex("sparse_indices", 0);
+    const user_op::Tensor* num_valid_sparse_feature =
+        ctx->Tensor4ArgNameAndIndex("num_valid_sparse_feature", 0);
     param.sparse_feature = sparse_feature->dptr<T>();
-    param.sparse_indices =
-        reinterpret_cast<const IDX*>(sparse_indices->dptr());  // TODO: IDX template
+    CHECK_EQ(sparse_indices->data_type(), DataType::kUInt32);
+    param.sparse_indices = reinterpret_cast<const uint32_t*>(sparse_indices->dptr());
     param.sparse_dim = ctx->TensorDesc4ArgNameAndIndex("sparse_indices", 0)->shape().At(1);
     param.sparse_dim_start = features_concated_dim;
     features_concated_dim += param.sparse_dim;
@@ -881,13 +887,13 @@ bool DispatchFeatureInteractionDotBackwardPackSize(user_op::KernelComputeContext
         ctx->Tensor4ArgNameAndIndex("sparse_feature_grad", 0)->mut_dptr<T>();
     const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
     const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
-    LaunchMemset<T, IDX>(
-        ctx->stream()->As<ep::CudaStream>()->cuda_stream(),
-        ctx->Tensor4ArgNameAndIndex("sparse_feature_grad", 0)->shape_view().elem_cnt(), vector_size, parallel_num,
-        reinterpret_cast<const IDX*>(
-            ctx->Tensor4ArgNameAndIndex("num_valid_sparse_feature", 0)->dptr())
-            + parallel_id * parallel_num,
-        param.sparse_feature_grad);
+    CHECK_EQ(num_valid_sparse_feature->data_type(), DataType::kUInt32);
+    LaunchMemset<T>(ctx->stream()->As<ep::CudaStream>()->cuda_stream(),
+                    ctx->Tensor4ArgNameAndIndex("sparse_feature_grad", 0)->shape_view().elem_cnt(),
+                    vector_size, parallel_num,
+                    reinterpret_cast<const uint32_t*>(num_valid_sparse_feature->dptr())
+                        + parallel_id * parallel_num,
+                    param.sparse_feature_grad);
   } else {
     param.sparse_feature = nullptr;
     param.sparse_indices = nullptr;
@@ -916,9 +922,9 @@ bool DispatchFeatureInteractionDotBackwardPackSize(user_op::KernelComputeContext
         param);
   } else {
     if (ctx->has_input("sparse_feature", 0) && dy->data_type() == DataType::kFloat16) {
-      LOG(WARNING)
+      UNIMPLEMENTED()
           << "fused dot interaction backward kernel not support sparse_feature with pack_size 1, "
-             "because atomicAdd(half) is too slow, fallback to not fused kernel";
+             "because atomicAdd(half) is too slow";
       return false;
     }
     return DotFeatureInteractionBackwardKernel<T, max_in, 1, 1>::Launch(
@@ -1110,6 +1116,7 @@ class FusedDotFeatureInteractionPoolingSumKernel final : public user_op::OpKerne
  private:
   using user_op::OpKernel::Compute;
   void Compute(user_op::KernelComputeContext* ctx) const override {
+    CHECK(!ctx->has_input("sparse_feature", 0)) << "pooling sum, sparse_feature is not supported. ";
     const int input_size = ctx->input_size("features");
     if (input_size == 1) {
       DispatchFeatureInteractionSumInputSize<T, 1>(ctx, input_size);
@@ -1182,6 +1189,7 @@ class FusedDotFeatureInteractionKernel final : public user_op::OpKernel {
       bool success = TryLaunchTensorCoreDotKernel<T>(ctx);
       if (success == true) { return; }
     }
+    CHECK(!ctx->has_input("sparse_feature", 0)) << "sparse_feature is not supported. ";
     user_op::Tensor* tmp_buffer = ctx->Tensor4ArgNameAndIndex("tmp_buffer", 0);
     const int64_t batch_size = out->shape_view().At(0);
     int64_t features_concated_dim = 0;
@@ -1288,6 +1296,7 @@ class FusedDotFeatureInteractionGradKernel final : public user_op::OpKernel {
       bool success = TryLaunchTensorCoreDotBackwardKernel<T>(ctx);
       if (success == true) { return; }
     }
+    CHECK(!ctx->has_input("sparse_feature", 0)) << "sparse_feature is not supported. ";
     const int64_t batch_size = dy->shape_view().At(0);
     int64_t features_concated_dim = 0;
     for (int32_t i = 0; i < ctx->output_size("features_grad"); ++i) {
