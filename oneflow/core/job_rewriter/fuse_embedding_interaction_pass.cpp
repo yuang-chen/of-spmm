@@ -63,6 +63,16 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
       // only support half and embedding_size % 2 == 0 fuse, because atomicAdd half is slow.
       return;
     }
+    if (op_node->LogicalBlobDesc4Lbi(GenLogicalBlobId(indices_lbn)).data_type()
+        != DataType::kUInt32) {
+      // only support indices with uint32_t dtype
+      return;
+    }
+    if (op_node->LogicalBlobDesc4Lbi(GenLogicalBlobId(num_unique_matrix_lbn)).data_type()
+        != DataType::kUInt32) {
+      // only support num_unique with uint32_t dtype
+      return;
+    }
     for (const OpEdge* out_edge : op_node->out_edges()) {
       const OpNode* consumer = out_edge->dst_node();
       if (!consumer->op().op_conf().has_user_conf()) { return; }
