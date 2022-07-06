@@ -72,7 +72,11 @@ namespace oneflow {
 }
 
 /* static */ Maybe<void> FusedDotFeatureInteractionOp::GetSbp(user_op::SbpContext* ctx) {
-  ctx->NewBuilder().Split(ctx->inputs(), 0).Split(ctx->outputs(), 0).Build();
+  auto builder = ctx->NewBuilder().Split(ctx->inputs(), 0).Split(ctx->outputs(), 0);
+  if (ctx->user_op_conf().has_input("num_valid_sparse_feature", 0)) {
+    builder.Broadcast(user_op::OpArg("num_valid_sparse_feature", 0));
+  }
+  builder.Build();
   return Maybe<void>::Ok();
 }
 
@@ -118,7 +122,11 @@ namespace oneflow {
 }
 
 /* static */ Maybe<void> FusedDotFeatureInteractionGradOp::GetSbp(user_op::SbpContext* ctx) {
-  ctx->NewBuilder().Split(ctx->inputs(), 0).Split(ctx->outputs(), 0).Build();
+  auto builder = ctx->NewBuilder().Split(ctx->inputs(), 0).Split(ctx->outputs(), 0);
+  if (ctx->user_op_conf().has_input("num_valid_sparse_feature", 0)) {
+    builder.Broadcast(user_op::OpArg("num_valid_sparse_feature", 0));
+  }
+  builder.Build();
   return Maybe<void>::Ok();
 }
 
@@ -154,7 +162,8 @@ REGISTER_USER_OP_GRAD("fused_dot_feature_interaction")
                            op.TensorDesc4ArgNameAndIndex("output_concat", 0).shape().At(1));
       }
       if (op.user_op_conf().has_input("sparse_feature", 0)) {
-        builder.Input("sparse_feature", op.input("sparse_feature", 0))
+        builder.Input("num_valid_sparse_feature", op.input("num_valid_sparse_feature", 0))
+            .Input("sparse_feature", op.input("sparse_feature", 0))
             .Input("sparse_indices", op.input("sparse_indices", 0))
             .Output("sparse_feature_grad");
       }

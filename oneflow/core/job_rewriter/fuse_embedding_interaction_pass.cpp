@@ -46,9 +46,7 @@ class FuseEmbeddingShuffleInteractionPass final : public JobPass {
   FuseEmbeddingShuffleInteractionPass() = default;
   ~FuseEmbeddingShuffleInteractionPass() override = default;
 
-  bool IsEnabled(const JobPassCtx& ctx) const {
-    return true;
-  }
+  bool IsEnabled(const JobPassCtx& ctx) const { return true; }
   Maybe<void> Apply(const OpGraph& op_graph, JobBuilder* job_builder) const;
 
   Maybe<void> Apply(Job* job, JobPassCtx* ctx) const override {
@@ -70,6 +68,13 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
     const std::string& embeddings_lbn = embedding_shuffle_conf.output("embeddings", 0);
     const std::string& indices_lbn =
         embedding_shuffle_conf.input("inverse_unique_partition_indices", 0);
+    const std::string& num_unique_matrix_lbn = embedding_shuffle_conf.input("num_unique_matrix", 0);
+    if (op_node->LogicalBlobDesc4Lbi(GenLogicalBlobId(embeddings_lbn)).data_type()
+            != DataType::kFloat16
+        || embedding_shuffle_conf.attr<int64_t>("embedding_size") % 2 != 0) {
+      // only support half and embedding_size % 2 == 0 fuse, because atomicAdd half is slow.
+      return;
+    }
     for (const OpEdge* out_edge : op_node->out_edges()) {
       const OpNode* consumer = out_edge->dst_node();
       if (!consumer->op().op_conf().has_user_conf()) { return; }
@@ -88,6 +93,7 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
       fused_op_builder.OpTypeName(op_type_name)
           .Input("sparse_feature", embeddings_lbn)
           .Input("sparse_indices", indices_lbn)
+          .Input("num_valid_sparse_feature", num_unique_matrix_lbn)
           .Attr<bool>("self_interaction", consumer_op_conf.attr<bool>("self_interaction"))
           .Attr<std::string>("pooling", consumer_op_conf.attr<std::string>("pooling"));
       for (int i = 0; i < input_size - 1; ++i) {
@@ -131,13 +137,9 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
           }
         }
       }
-      LOG(ERROR) << "replace " << new_op_conf.name();
       job_builder->MutOpsOnlyOnce({new_op_conf});
     }
-    for (const auto& pair : op_name2op_conf) {
-      LOG(ERROR) << "replace " << pair.first;
-      job_builder->MutOpsOnlyOnce({pair.second});
-    }
+    for (const auto& pair : op_name2op_conf) { job_builder->MutOpsOnlyOnce({pair.second}); }
   });
 
   return Maybe<void>::Ok();

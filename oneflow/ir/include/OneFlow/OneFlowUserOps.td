@@ -2548,6 +2548,7 @@ def OneFlow_FusedDotFeatureInteractionOp : OneFlow_BaseOp<"fused_dot_feature_int
   let input = (ins
     Variadic<OneFlow_Tensor>:$features,
     Optional<OneFlow_Tensor>:$output_concat,
+    Optional<OneFlow_Tensor>:$num_valid_sparse_feature,
     Optional<OneFlow_Tensor>:$sparse_feature,
     Optional<OneFlow_Tensor>:$sparse_indices
   );
@@ -2570,6 +2571,7 @@ def OneFlow_FusedDotFeatureInteractionGradOp : OneFlow_BaseOp<"fused_dot_feature
   let input = (ins
     OneFlow_Tensor:$dy,
     Variadic<OneFlow_Tensor>:$features,
+    Optional<OneFlow_Tensor>:$num_valid_sparse_feature,
     Optional<OneFlow_Tensor>:$sparse_feature,
     Optional<OneFlow_Tensor>:$sparse_indices
   );
