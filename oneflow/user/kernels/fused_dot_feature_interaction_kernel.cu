@@ -740,9 +740,8 @@ struct DotFeatureInteractionBackwardKernel {
 };
 
 template<typename T, size_t pack>
-__global__ void MemsetGpu(int64_t vector_size, const IDX* num_valid, T* dst) {
+__global__ void MemsetGpu(int64_t parallel_num, int64_t vector_size, const IDX* num_valid, T* dst) {
   size_t count = 0;
-  int parallel_num = 4;
   for (int i = 0; i < parallel_num; ++i) { count += num_valid[i] * vector_size; }
   const size_t pack_count = count / pack;
   Pack<T, pack> pack_value;
@@ -758,7 +757,7 @@ template<typename T, size_t pack>
 typename std::enable_if<(pack != 0), void>::type LaunchPackMemsetGpu(cudaStream_t stream,
                                                                      const IDX* num_valid, T* ptr,
                                                                      size_t count,
-                                                                     int64_t vector_size) {
+                                                                     int64_t vector_size, int64_t parallel_num) {
   MemsetGpu<T, pack><<<BlocksNum4ThreadsNum(count / pack), kCudaThreadsNumPerBlock, 0, stream>>>(
       vector_size, num_valid, ptr);
 }
@@ -767,24 +766,24 @@ template<typename T, size_t pack>
 typename std::enable_if<(pack == 0), void>::type LaunchPackMemsetGpu(cudaStream_t stream,
                                                                      const IDX* num_valid, T* ptr,
                                                                      size_t count,
-                                                                     int64_t vector_size) {
+                                                                     int64_t vector_size, int64_t parallel_num) {
   LOG(FATAL) << "wrong alignment";
 }
 
 template<typename T, typename IDX>
-void LaunchMemset(cudaStream_t stream, size_t count, int64_t vector_size, const IDX* num_valid,
+void LaunchMemset(cudaStream_t stream, size_t count, int64_t vector_size, int64_t parallel_num, const IDX* num_valid,
                   T* ptr) {
   auto uintptr = reinterpret_cast<std::uintptr_t>(ptr);
   if (uintptr % 16 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size);
+    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else if (uintptr % 8 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size);
+    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else if (uintptr % 4 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size);
+    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else if (uintptr % 2 == 0) {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size);
+    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   } else {
-    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size);
+    LaunchPackMemsetGpu<T, 16 / sizeof(T)>(stream, num_valid, ptr, count, vector_size, parallel_num);
   }
 }
 
@@ -884,7 +883,7 @@ bool DispatchFeatureInteractionDotBackwardPackSize(user_op::KernelComputeContext
     const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
     LaunchMemset<T, IDX>(
         ctx->stream()->As<ep::CudaStream>()->cuda_stream(),
-        ctx->Tensor4ArgNameAndIndex("sparse_feature_grad", 0)->shape_view().elem_cnt(), vector_size,
+        ctx->Tensor4ArgNameAndIndex("sparse_feature_grad", 0)->shape_view().elem_cnt(), vector_size, parallel_num,
         reinterpret_cast<const IDX*>(
             ctx->Tensor4ArgNameAndIndex("num_valid_sparse_feature", 0)->dptr())
             + parallel_id * parallel_num,
