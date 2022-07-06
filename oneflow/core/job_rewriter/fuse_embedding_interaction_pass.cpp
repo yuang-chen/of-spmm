@@ -84,8 +84,10 @@ Maybe<void> FuseEmbeddingShuffleInteractionPass::Apply(const OpGraph& op_graph,
       if (consumer_op_conf.attr<std::string>("pooling") != "none") { return; }
       int input_size = consumer_op_conf.input_size("features");
       CHECK_GT(input_size, 0);
-      // only support embeddings as last feature
-      if (consumer_op_conf.input("features", input_size - 1) != embeddings_lbn) { return; }
+      if (consumer_op_conf.input("features", input_size - 1) != embeddings_lbn) {
+        // only support embeddings as last feature
+        return;
+      }
       user_op::UserOpConfWrapperBuilder fused_op_builder(consumer_op_conf.op_name());
       const std::string& op_type_name = consumer_op_conf.op_type_name();
       fused_op_builder.OpTypeName(op_type_name)

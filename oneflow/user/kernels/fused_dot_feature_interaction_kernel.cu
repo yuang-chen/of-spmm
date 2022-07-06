@@ -871,8 +871,8 @@ bool DispatchFeatureInteractionDotBackwardPackSize(user_op::KernelComputeContext
   }
   if (ctx->has_input("sparse_feature", 0)) {
     CHECK(ctx->has_input("sparse_indices", 0));
+    CHECK(ctx->has_input("num_valid_sparse_feature", 0));
     CHECK(ctx->has_output("sparse_feature_grad", 0));
-    CHECK(ctx->has_output("num_valid_sparse_feature", 0));
     const user_op::Tensor* sparse_feature = ctx->Tensor4ArgNameAndIndex("sparse_feature", 0);
     const user_op::Tensor* sparse_indices = ctx->Tensor4ArgNameAndIndex("sparse_indices", 0);
     const user_op::Tensor* num_valid_sparse_feature =
@@ -922,9 +922,9 @@ bool DispatchFeatureInteractionDotBackwardPackSize(user_op::KernelComputeContext
         param);
   } else {
     if (ctx->has_input("sparse_feature", 0) && dy->data_type() == DataType::kFloat16) {
-      LOG(WARNING)
+      UNIMPLEMENTED()
           << "fused dot interaction backward kernel not support sparse_feature with pack_size 1, "
-             "because atomicAdd(half) is too slow, fallback to not fused kernel";
+             "because atomicAdd(half) is too slow";
       return false;
     }
     return DotFeatureInteractionBackwardKernel<T, max_in, 1, 1>::Launch(
