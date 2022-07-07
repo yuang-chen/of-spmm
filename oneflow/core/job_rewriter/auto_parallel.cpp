@@ -50,7 +50,6 @@ class AutoParallelPass final : public JobPass {
 Maybe<void> AutoParallelPass::Apply(const OpGraph& op_graph, Job* job) const {
   // auto-parallel
   // TODO: recode this
-  std::cout << "Start Auto Parallel" << std::endl;
   auto time_begin = std::chrono::high_resolution_clock::now();
 
   auto_parallel::SbpConstructor sbp_constructor(op_graph, job);
@@ -60,10 +59,7 @@ Maybe<void> AutoParallelPass::Apply(const OpGraph& op_graph, Job* job) const {
   std::cout << "Auto parallel took "
             << std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_begin).count()
             << " ms\n";
-  if (GlobalProcessCtx::Rank() == 0) {
-    sbp_constructor.PrintSBPGraphDebugInfo();
-    JUST(sbp_constructor.CheckSbpAgreement(*job));
-  }
+  if (GlobalProcessCtx::Rank() == 0) { JUST(sbp_constructor.CheckSbpAgreement(*job)); }
   return Maybe<void>::Ok();
 }
 
