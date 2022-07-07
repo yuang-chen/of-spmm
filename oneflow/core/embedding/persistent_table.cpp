@@ -716,9 +716,11 @@ void PersistentTableImpl<Key, Engine>::LoadSnapshot(
     CHECK_EQ(index_file_size % sizeof(uint64_t), 0);
     if (index_file_size == 0) { return; }
     const size_t n_entries = index_file_size / sizeof(uint64_t);
-    PosixMappedFile mapped_index(std::move(index_file), index_file_size, PROT_READ);
+    PosixMappedFile mapped_index(std::move(index_file), index_file_size, PROT_READ,
+                                 MAP_SHARED | MAP_LOCKED);
     PosixFile key_file(KeyFilePath(chunk_id), O_RDONLY, 0644);
-    PosixMappedFile mapped_key(std::move(key_file), key_file.Size(), PROT_READ);
+    PosixMappedFile mapped_key(std::move(key_file), key_file.Size(), PROT_READ,
+                               MAP_SHARED | MAP_LOCKED);
     const uint64_t* indices = static_cast<const uint64_t*>(mapped_index.ptr());
     const Key* keys = static_cast<const Key*>(mapped_key.ptr());
     const uint64_t chunk_start_index = chunk_id * num_values_per_chunk_;
@@ -728,7 +730,8 @@ void PersistentTableImpl<Key, Engine>::LoadSnapshot(
     }
     if (Hook) {
       PosixFile value_file(ValueFilePath(chunk_id), O_RDONLY, 0644);
-      PosixMappedFile mapped_value(std::move(value_file), value_file.Size(), PROT_READ);
+      PosixMappedFile mapped_value(std::move(value_file), value_file.Size(), PROT_READ,
+                                   MAP_SHARED | MAP_LOCKED);
       ChunkIteratorImpl<Key> chunk_iterator(value_size_, logical_block_size_, num_values_per_block_,
                                             num_values_per_chunk_, chunk_id, n_entries, keys,
                                             indices, mapped_value.ptr());
