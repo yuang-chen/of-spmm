@@ -861,7 +861,8 @@ class IdShuffleKernel final : public user_op::OpKernel {
           && (user_op::HobDataType("cur_rank_unique_table_ids", 0)                               \
               == OF_PP_PAIR_SECOND(table_id_dtype_pair))                                         \
           && (user_op::HobDataType("num_unique_matrix", 0) == OF_PP_PAIR_SECOND(idx_dtype_pair)) \
-          && !ParseBooleanFromEnv("NEW_ID_SHUFFLE", false))                                      \
+          && !ParseBooleanFromEnv("NEW_ID_SHUFFLE", false)                                       \
+          && !ParseBooleanFromEnv("USE_P2P_KERNEL", false))                                      \
       .SetInferTmpSizeFn([](user_op::InferContext* ctx) {                                        \
         const user_op::TensorDesc& ids = ctx->InputTensorDesc("ids", 0);                         \
         const bool has_table_ids = ctx->has_input("table_ids", 0);                               \
