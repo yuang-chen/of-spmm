@@ -1172,7 +1172,8 @@ bool TryLaunchTensorCoreDotBackwardKernel(user_op::KernelComputeContext* ctx) {
   }
 }
 template<typename T>
-class FusedDotFeatureInteractionKernel final : public user_op::OpKernel {
+class FusedDotFeatureInteractionKernel final : public user_op::OpKernel,
+                                                         public user_op::CudaGraphSupport {
  public:
   FusedDotFeatureInteractionKernel() = default;
   ~FusedDotFeatureInteractionKernel() override = default;
@@ -1279,7 +1280,8 @@ REGISTER_FUSED_DOT_FEATURE_INTERACTION_KERNEL(float)
 REGISTER_FUSED_DOT_FEATURE_INTERACTION_KERNEL(half)
 
 template<typename T>
-class FusedDotFeatureInteractionGradKernel final : public user_op::OpKernel {
+class FusedDotFeatureInteractionGradKernel final : public user_op::OpKernel,
+                                                         public user_op::CudaGraphSupport {
  public:
   FusedDotFeatureInteractionGradKernel() = default;
   ~FusedDotFeatureInteractionGradKernel() override = default;
