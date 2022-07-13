@@ -387,9 +387,9 @@ void BuildIdShuffle(bool use_system_gather, const std::string& embedding_name,
     id_shuffle_new_op_conf.set_stream_name_hint(embedding_name + "_ID_SHUFFLE");
     add_ops->push_back(id_shuffle_new_op_conf);
 
-    if(ParseBooleanFromEnv("ADD_IDENTITY", false)) {
-      user_op::UserOpConfWrapperBuilder identity_op_builder(embedding_op.op_name() + "_tuple_identity_"
-                                                            + NewUniqueId());
+    if (ParseBooleanFromEnv("ADD_IDENTITY", false)) {
+      user_op::UserOpConfWrapperBuilder identity_op_builder(embedding_op.op_name()
+                                                            + "_tuple_identity_" + NewUniqueId());
       user_op::UserOpConfWrapper identity_op =
           identity_op_builder.OpTypeName("tuple_identity")
               .Input("in", id_shuffle_op.output("inverse_unique_partition_indices", 0))
@@ -405,9 +405,9 @@ void BuildIdShuffle(bool use_system_gather, const std::string& embedding_name,
       identity_op_conf.set_stream_name_hint(embedding_name + "_EMBEDDING");
       add_ops->push_back(identity_op_conf);
 
-      *inner_inverse_unique_partition_indices_lbn =
-          identity_op.output("out", 0);
-      *num_unique_ids_lbn = identity_op.output("out", 1);;
+      *inner_inverse_unique_partition_indices_lbn = identity_op.output("out", 0);
+      *num_unique_ids_lbn = identity_op.output("out", 1);
+      ;
       *unique_ids_lbn = identity_op.output("out", 2);
       *unique_table_ids_lbn = identity_op.output("out", 3);
       *inverse_indices_lbn = identity_op.output("out", 4);
