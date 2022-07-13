@@ -120,6 +120,19 @@ __global__ void HashTableUniquePairs(const uint32_t table_capacity, const uint32
                                      K* unique_keys, V* unique_values, IDX* reverse_index,
                                      bool need_process_values) {
   //改成两重循环 for(parallel_num) for(* num_uniques[parallel_id])
+  if (threadIdx.x == 0) {
+    volatile int32_t* start_f = param.is_kernel_start[parallel_id];
+    *start_f = 1;
+  }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    for (int k = 0; k < parallel_num; ++k) {
+      volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
+      while (*is_kernel_start_ptr == 0)
+        ;
+    }
+  }
+  __syncthreads();
   CUDA_1D_KERNEL_LOOP_T(uint32_t, i, parallel_num * num_ids) {
     int rank_id = i / num_ids;
     int rank_index = i - rank_id * num_ids;
@@ -457,7 +470,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
     size_t hash_table_capacity = parallel_num * num_ids;
     void* workspace_ptr = buffer_manager.Ptr(IdShuffleBufferType::kWorkspace);
     size_t workspace_size = buffer_manager.Size(IdShuffleBufferType::kWorkspace);
-    LOG(ERROR) << "launch UniqueAndPartition " << parallel_id << " iter " << current_iter_;
+    // LOG(ERROR) << "launch UniqueAndPartition " << parallel_id << " iter " << current_iter_;
     UniqueAndPartition<K, U, IDX, embedding::ShardingHash>(
         cuda_stream, num_ids, hash_table_capacity, parallel_num,
         reinterpret_cast<const K*>(ids->dptr()), table_ids_ptr, num_partitioned_unique,
@@ -484,7 +497,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
 
     // CHECK_JUST(ctx->stream()->Sync());
     // OF_ENV_BARRIER();
-    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    // BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     HashTableUniquePairs<K, U, IDX, embedding::LocalUniqueHash>
         <<<BlocksNum4ThreadsNum(parallel_num * num_ids), kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
             hash_table_capacity, num_ids, parallel_num, parallel_id, cur_rank_num_unique_ids_ptr,
