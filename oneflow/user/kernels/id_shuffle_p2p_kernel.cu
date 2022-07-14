@@ -113,8 +113,20 @@ __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
     volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
     while (*is_kernel_start_ptr != count + 1)
       ;
-    // printf("\nparallel_id %d k %d is_kernel_start_ptr %d\n", parallel_id, k,
-    // *is_kernel_start_ptr);
+  }
+}
+
+template<typename K, typename V, typename IDX, int N>
+__global__ void EndBarrierKernel(int32_t parallel_id, int32_t parallel_num,
+                                 Param<K, V, IDX, N> param) {
+  int count = *param.kernel_start_counter[parallel_id];
+  volatile int32_t* start_f = param.kernel_start_counter[parallel_id];
+  *start_f = count + 1;
+  // printf("\nparallel_id %d set to %d\n", parallel_id, *start_f);
+  for (int k = 0; k < parallel_num; ++k) {
+    volatile int32_t* is_kernel_start_ptr = param.kernel_start_counter[k];
+    while (*is_kernel_start_ptr != count + 1)
+      ;
   }
 }
 
@@ -129,21 +141,21 @@ __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
 //      ;
 //  }
 //}
-template<typename K, typename V, typename IDX, int N>
-__global__ void EndBarrierKernel(int32_t parallel_id, int32_t parallel_num,
-                                 Param<K, V, IDX, N> param) {
-  for (int k = 0; k < parallel_num; ++k) {
-    if (k != parallel_id) {
-      int old_val = atomicAdd(param.is_kernel_start[k], 1);
-      // printf("\nparallel_id %d k %d old val %d\n", parallel_id, k, old_val);
-    }
-  }
-  volatile int32_t* start_f = param.is_kernel_start[parallel_id];
-  while (*start_f < parallel_num)
-    ;
-  printf("\nset parallel_id %d to 0\n", parallel_id);
-  *start_f = 0;
-}
+// template<typename K, typename V, typename IDX, int N>
+//__global__ void EndBarrierKernel(int32_t parallel_id, int32_t parallel_num,
+//                                 Param<K, V, IDX, N> param) {
+//  for (int k = 0; k < parallel_num; ++k) {
+//    if (k != parallel_id) {
+//      int old_val = atomicAdd(param.is_kernel_start[k], 1);
+//      // printf("\nparallel_id %d k %d old val %d\n", parallel_id, k, old_val);
+//    }
+//  }
+//  volatile int32_t* start_f = param.is_kernel_start[parallel_id];
+//  while (*start_f < parallel_num)
+//    ;
+//  printf("\nset parallel_id %d to 0\n", parallel_id);
+//  *start_f = 0;
+//}
 
 template<typename K, typename V, typename IDX, typename HASH, int N>
 __global__ void HashTableUniquePairs(const uint32_t table_capacity, const uint32_t num_ids,
@@ -557,7 +569,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
             reinterpret_cast<K*>(cur_rank_unique_ids->mut_dptr()),
             reinterpret_cast<U*>(cur_rank_unique_table_ids->mut_dptr()),
             reinterpret_cast<IDX*>(cur_rank_inverse_indices->mut_dptr()), need_process_table_ids);
-    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    EndBarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     if (parallel_num > 1) {
       // use num_partitioned_unique as indices_offset buffer, so should after ncclAllGather.
       ComputeOffset<<<1, 1, 0, cuda_stream>>>(parallel_num, num_partitioned_unique);
