@@ -111,7 +111,7 @@ __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
   // printf("\nparallel_id %d set to %d\n", parallel_id, *start_f);
   for (int k = 0; k < parallel_num; ++k) {
     volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
-    while (*is_kernel_start_ptr != count + 1)
+    while (*is_kernel_start_ptr < count + 1)
       ;
   }
 }
@@ -125,7 +125,7 @@ __global__ void EndBarrierKernel(int32_t parallel_id, int32_t parallel_num,
   // printf("\nparallel_id %d set to %d\n", parallel_id, *start_f);
   for (int k = 0; k < parallel_num; ++k) {
     volatile int32_t* is_kernel_start_ptr = param.kernel_start_counter[k];
-    while (*is_kernel_start_ptr != count + 1)
+    while (*is_kernel_start_ptr < count + 1)
       ;
   }
 }
@@ -174,10 +174,11 @@ __global__ void HashTableUniquePairs(const uint32_t table_capacity, const uint32
   //}
   //__syncthreads();
   //__threadfence_system();
+#pragma unroll 1
   for (int i = 0; i < parallel_num; ++i) {
     int rank_id = (parallel_id + i) % parallel_num;
     // volatile int32_t* is_kernel_start_ptr = param.kernel_start_counter[rank_id];
-    // while (*is_kernel_start_ptr != count + 1);
+    // while (*is_kernel_start_ptr < count + 1);
     const IDX* num_uniques = param.num_unique[rank_id];
     CUDA_1D_KERNEL_LOOP_T(int, rank_index, num_uniques[parallel_id]) {
       const IDX* num_uniques = param.num_unique[rank_id];
@@ -569,7 +570,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
             reinterpret_cast<K*>(cur_rank_unique_ids->mut_dptr()),
             reinterpret_cast<U*>(cur_rank_unique_table_ids->mut_dptr()),
             reinterpret_cast<IDX*>(cur_rank_inverse_indices->mut_dptr()), need_process_table_ids);
-    EndBarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     if (parallel_num > 1) {
       // use num_partitioned_unique as indices_offset buffer, so should after ncclAllGather.
       ComputeOffset<<<1, 1, 0, cuda_stream>>>(parallel_num, num_partitioned_unique);
