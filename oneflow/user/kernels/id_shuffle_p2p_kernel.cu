@@ -109,7 +109,8 @@ __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
     volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
     while (*is_kernel_start_ptr == 0)
       ;
-    printf("\nparallel_id %d k %d is_kernel_start_ptr %d\n", parallel_id, k, *is_kernel_start_ptr);
+    // printf("\nparallel_id %d k %d is_kernel_start_ptr %d\n", parallel_id, k,
+    // *is_kernel_start_ptr);
   }
 }
 
@@ -327,8 +328,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
                          + partitioned_unique_table_ids_size_ + is_kernel_start_size;
     buffer_ptrs_.resize(parallel_num);
     cudaMalloc(&buffer_ptrs_.at(parallel_id), buffer_size);
-    cudaMemset(buffer_ptrs_.at(parallel_id), buffer_size, 0);
-    LOG(ERROR) << "rank " << parallel_id << " make ptr " << buffer_ptrs_.at(parallel_id);
+    // LOG(ERROR) << "rank " << parallel_id << " make ptr " << buffer_ptrs_.at(parallel_id);
     std::string name = ctx->op_name() + std::to_string(num_ids);  // train and eval same op name.
     for (int64_t i = 0; i < parallel_num; ++i) {
       std::string key = name + std::to_string(i);
@@ -345,7 +345,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
         OF_CUDA_CHECK(
             cudaIpcOpenMemHandle(&buffer_ptrs_.at(i), handle, cudaIpcMemLazyEnablePeerAccess));
       }
-      LOG(ERROR) << "rank " << parallel_id << " i " << i << " " << buffer_ptrs_.at(i);
+      // LOG(ERROR) << "rank " << parallel_id << " i " << i << " " << buffer_ptrs_.at(i);
     }
   }
   ~DataShuffleKernelState() {
@@ -500,7 +500,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
     size_t hash_table_capacity = parallel_num * num_ids;
     void* workspace_ptr = buffer_manager.Ptr(IdShuffleBufferType::kWorkspace);
     size_t workspace_size = buffer_manager.Size(IdShuffleBufferType::kWorkspace);
-    LOG(ERROR) << "launch UniqueAndPartition " << parallel_id << " iter " << current_iter_;
+    // LOG(ERROR) << "launch UniqueAndPartition " << parallel_id << " iter " << current_iter_;
     Param<K, U, IDX, 8> param;
     CHECK_LE(parallel_num, 8);
     for (int i = 0; i < parallel_num; ++i) {
@@ -538,12 +538,11 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
             reinterpret_cast<U*>(cur_rank_unique_table_ids->mut_dptr()),
             reinterpret_cast<IDX*>(cur_rank_inverse_indices->mut_dptr()), need_process_table_ids);
 
-    EndBarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
-    // CHECK_JUST(ctx->stream()->Sync());
-    // OF_ENV_BARRIER();
-    // OF_CUDA_CHECK(
-    //    cudaMemsetAsync(kernel_state->IsKernelStart(parallel_id), 0, sizeof(int32_t),
-    //    cuda_stream));
+    // EndBarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    CHECK_JUST(ctx->stream()->Sync());
+    OF_ENV_BARRIER();
+    OF_CUDA_CHECK(cudaMemsetAsync(kernel_state->IsKernelStart(parallel_id, current_iter_), 0,
+                                  sizeof(int32_t), cuda_stream));
     if (parallel_num > 1) {
       // use num_partitioned_unique as indices_offset buffer, so should after ncclAllGather.
       ComputeOffset<<<1, 1, 0, cuda_stream>>>(parallel_num, num_partitioned_unique);
