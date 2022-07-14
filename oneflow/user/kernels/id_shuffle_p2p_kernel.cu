@@ -98,16 +98,18 @@ struct Param {
   U* unique_table_ids[N];
   int32_t* is_kernel_start[N];
   IDX* num_unique_matrix;
+  int iter;
 };
 
 template<typename K, typename V, typename IDX, int N>
 __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
                               Param<K, V, IDX, N> param) {
+  int count = *param.is_kernel_start[parallel_id];
   volatile int32_t* start_f = param.is_kernel_start[parallel_id];
-  *start_f = 1;
+  *start_f = count + 1;
   for (int k = 0; k < parallel_num; ++k) {
     volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
-    while (*is_kernel_start_ptr != 1)
+    while (*is_kernel_start_ptr != count + 1)
       ;
     // printf("\nparallel_id %d k %d is_kernel_start_ptr %d\n", parallel_id, k,
     // *is_kernel_start_ptr);
@@ -520,16 +522,13 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
     OF_CUDA_CHECK(cudaMemsetAsync(cur_rank_num_unique_ids_ptr, 0, sizeof(IDX), cuda_stream));
 
     param.num_unique_matrix = num_unique_matrix_ptr;
+    param.iter = current_iter_;
     // OF_CUDA_CHECK(
     //    cudaMemsetAsync(kernel_state->IsKernelStart(parallel_id), 1, sizeof(int32_t),
     //    cuda_stream));
 
     // CHECK_JUST(ctx->stream()->Sync());
     // OF_ENV_BARRIER();
-    ncclComm_t comm = kernel_state->comm();
-    // OF_NCCL_CHECK(ncclAllGather(num_partitioned_unique, num_unique_matrix_ptr, parallel_num,
-    //                            GetNcclDataType(num_unique_matrix->data_type()), comm,
-    //                            cuda_stream));
     BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     HashTableUniquePairs<K, U, IDX, embedding::LocalUniqueHash>
         <<<BlocksNum4ThreadsNum(parallel_num * num_ids), kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
@@ -538,14 +537,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
             reinterpret_cast<K*>(cur_rank_unique_ids->mut_dptr()),
             reinterpret_cast<U*>(cur_rank_unique_table_ids->mut_dptr()),
             reinterpret_cast<IDX*>(cur_rank_inverse_indices->mut_dptr()), need_process_table_ids);
-    OF_NCCL_CHECK(ncclAllGather(num_partitioned_unique, num_unique_matrix_ptr, parallel_num,
-                                GetNcclDataType(num_unique_matrix->data_type()), comm,
-                                cuda_stream));
-    // EndBarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
-    // CHECK_JUST(ctx->stream()->Sync());
-    // OF_ENV_BARRIER();
-    OF_CUDA_CHECK(
-        cudaMemsetAsync(kernel_state->IsKernelStart(parallel_id), 0, sizeof(int32_t), cuda_stream));
+    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     if (parallel_num > 1) {
       // use num_partitioned_unique as indices_offset buffer, so should after ncclAllGather.
       ComputeOffset<<<1, 1, 0, cuda_stream>>>(parallel_num, num_partitioned_unique);
