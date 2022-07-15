@@ -1717,6 +1717,7 @@ class EmbeddingShuffleKernel final : public user_op::OpKernel {
       .SetIsMatchedHob(                                                                           \
           (user_op::HobDeviceType() == DeviceType::kCUDA)                                         \
           && (user_op::HobDataType("cur_rank_embeddings", 0) == OF_PP_PAIR_SECOND(t_dtype_pair))  \
+          && (!ParseBooleanFromEnv("EMBEDDING_SHUFFLE_USE_P2P_KERNEL", false))                    \
           && (user_op::HobDataType("num_unique_matrix", 0) == OF_PP_PAIR_SECOND(idx_dtype_pair))) \
       .SetInferTmpSizeFn([](user_op::InferContext* ctx) {                                         \
         const user_op::TensorDesc& inverse_unique_partition_indices =                             \
@@ -2155,6 +2156,7 @@ class EmbeddingGradientShuffleKernel final : public user_op::OpKernel {
       .SetIsMatchedHob(                                                                           \
           (user_op::HobDeviceType() == DeviceType::kCUDA)                                         \
           && (user_op::HobDataType("embedding_grad", 0) == OF_PP_PAIR_SECOND(t_dtype_pair))       \
+          && (!ParseBooleanFromEnv("EMBEDDING_GRADIENT_SHUFFLE_USE_P2P_KERNEL", false))           \
           && (user_op::HobDataType("num_unique_matrix", 0) == OF_PP_PAIR_SECOND(idx_dtype_pair))) \
       .SetInferTmpSizeFn([](user_op::InferContext* ctx) {                                         \
         const user_op::TensorDesc& cur_rank_unique_embedding_grad =                               \
