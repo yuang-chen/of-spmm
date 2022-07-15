@@ -23,10 +23,29 @@ limitations under the License.
 #include "oneflow/core/cuda/atomic.cuh"
 #include "oneflow/core/embedding/embedding_manager.h"
 #include "oneflow/core/control/ctrl_client.h"
+#include "oneflow/core/ep/include/primitive/memcpy.h"
+#include "absl/strings/str_cat.h"
 
 namespace oneflow {
 
 namespace {
+
+void DumpToFile(ep::Stream* stream, std::string filename, int64_t parallel_id, size_t data_size,
+                const void* ptr) {
+  void* host_ptr;
+  OF_CUDA_CHECK(cudaMallocHost(&host_ptr, data_size));
+  std::unique_ptr<ep::primitive::Memcpy> copyd2h_primitive =
+      ep::primitive::NewPrimitive<ep::primitive::MemcpyFactory>(DeviceType::kCUDA,
+                                                                ep::primitive::MemcpyKind::kDtoH);
+  CHECK(copyd2h_primitive);
+  copyd2h_primitive->Launch(stream, host_ptr, ptr, data_size);
+  CHECK_JUST(stream->Sync());
+  std::ofstream dx_os;
+  dx_os.open(StrCat("test/" + filename + "_", parallel_id));
+  dx_os.write(reinterpret_cast<char*>(host_ptr), data_size);
+  dx_os.close();
+  OF_CUDA_CHECK(cudaFreeHost(host_ptr));
+}
 
 template<typename T, int pack_size>
 struct alignas(sizeof(T) * pack_size) Pack {
@@ -85,67 +104,92 @@ __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
   }
 }
 
+struct IpcMemHandleOffset {
+  cudaIpcMemHandle_t handle;
+  int64_t offset;
+};
+
 void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embeddings_ptr,
              std::vector<void*>* inverse_indices_ptr, std::vector<void*>* is_kernel_start_ptr) {
   const int64_t num_ids =
       ctx->TensorDesc4ArgNameAndIndex("inverse_unique_partition_indices", 0)->shape().elem_cnt();
   const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
   const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
-  // unique_embeddings_ptr->at(parallel_id) =
-  //    const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr());
-  // inverse_indices_ptr->at(parallel_id) =
-  //    const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->dptr());
-
-  // LOG(ERROR) << "rank " << parallel_id << " have unique_embeddings_ptr "
-  //           << unique_embeddings_ptr->at(parallel_id) << " inverse_indices_ptr "
-  //           << inverse_indices_ptr->at(parallel_id);
+  unique_embeddings_ptr->at(parallel_id) =
+      const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr());
+  inverse_indices_ptr->at(parallel_id) =
+      const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->dptr());
+  if (parallel_id == 0) {
+    DumpToFile(ctx->stream(), "cur_rank_embeddings", parallel_id,
+               ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->shape_view().elem_cnt()
+                   * sizeof(uint32_t),
+               inverse_indices_ptr->at(parallel_id));
+  }
   std::string name =
       ctx->op_name()
       + std::to_string(num_ids);  // train and eval same op name. do it in pass? or use newUniqueId
+  {
+    std::vector<IpcMemHandleOffset> push_handle_offset;
+    push_handle_offset.resize(3);
+    OF_CUDA_CHECK(cudaIpcGetMemHandle(&push_handle_offset.at(0).handle,
+                                      unique_embeddings_ptr->at(parallel_id)));
+    OF_CUDA_CHECK(cudaIpcGetMemHandle(&push_handle_offset.at(1).handle,
+                                      inverse_indices_ptr->at(parallel_id)));
+    OF_CUDA_CHECK(cudaIpcGetMemHandle(&push_handle_offset.at(2).handle,
+                                      is_kernel_start_ptr->at(parallel_id)));
 
-  std::vector<cudaIpcMemHandle_t> handle;
-  handle.resize(3);
-  OF_CUDA_CHECK(cudaIpcGetMemHandle(&handle.at(0), unique_embeddings_ptr->at(parallel_id)));
-  OF_CUDA_CHECK(cudaIpcGetMemHandle(&handle.at(1), inverse_indices_ptr->at(parallel_id)));
-  OF_CUDA_CHECK(cudaIpcGetMemHandle(&handle.at(2), is_kernel_start_ptr->at(parallel_id)));
-
-  // void* unique_embeddings_base;
-  // OF_CUDA_CHECK(cudaIpcOpenMemHandle(&unique_embeddings_base, handle.at(0),
-  //                                   cudaIpcMemLazyEnablePeerAccess));
-  // int64_t unique_embeddings_offset =
-  // reinterpret_cast<char*>(unique_embeddings_ptr->at(parallel_id)) -
-  // reinterpret_cast<char*>(unique_embeddings_base); LOG(ERROR)<<"unique_embeddings_base
-  // "<<unique_embeddings_base<<" unique_embeddings_offset "<<unique_embeddings_offset;
-  //
-  // void* inverse_indices_base;
-  // OF_CUDA_CHECK(cudaIpcOpenMemHandle(&inverse_indices_base, handle.at(0),
-  //                                   cudaIpcMemLazyEnablePeerAccess));
-  // int64_t inverse_indices_offset =  reinterpret_cast<char*>(inverse_indices_ptr->at(parallel_id))
-  // -  reinterpret_cast<char*>(inverse_indices_base); LOG(ERROR)<<"inverse_indices_base
-  // "<<inverse_indices_base<<" inverse_indices_offset "<<unique_embeddings_offset;
-
-  Singleton<CtrlClient>::Get()->PushKV(
-      name + std::to_string(parallel_id),
-      std::string(reinterpret_cast<const char*>(handle.data()), 3 * sizeof(cudaIpcMemHandle_t)));
+    cudaError_t (*func)(void*, CUpointer_attribute, CUdeviceptr);
+    cudaGetDriverEntryPoint("cuPointerGetAttribute", (void**)(&func), cudaEnableDefault);
+    void* unique_embeddings_base;
+    func(&unique_embeddings_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
+         (CUdeviceptr)(unique_embeddings_ptr->at(parallel_id)));
+    push_handle_offset.at(0).offset =
+        reinterpret_cast<char*>(unique_embeddings_ptr->at(parallel_id))
+        - reinterpret_cast<char*>(unique_embeddings_base);
+    void* inverse_indices_base;
+    func(&inverse_indices_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
+         (CUdeviceptr)(inverse_indices_ptr->at(parallel_id)));
+    push_handle_offset.at(1).offset = reinterpret_cast<char*>(inverse_indices_ptr->at(parallel_id))
+                                      - reinterpret_cast<char*>(inverse_indices_base);
+    push_handle_offset.at(2).offset = 0;
+    LOG(ERROR) << "rank " << parallel_id << " have base: " << unique_embeddings_base
+               << "unique_embeddings_ptr offset" << push_handle_offset.at(0).offset
+               << " inverse_indices_offset " << push_handle_offset.at(1).offset;
+    Singleton<CtrlClient>::Get()->PushKV(
+        name + std::to_string(parallel_id),
+        std::string(reinterpret_cast<const char*>(push_handle_offset.data()),
+                    3 * sizeof(IpcMemHandleOffset)));
+  }
   for (int64_t i = 0; i < parallel_num; ++i) {
     std::string key = name + std::to_string(i);
     if (parallel_id != i) {
-      std::vector<cudaIpcMemHandle_t> handle;
-      handle.resize(3);
-      Singleton<CtrlClient>::Get()->PullKV(key, [i, &handle](const std::string& val) {
-        memcpy(handle.data(), val.data(), 3 * sizeof(cudaIpcMemHandle_t));
+      std::vector<IpcMemHandleOffset> handle_offset;
+      handle_offset.resize(3);
+      Singleton<CtrlClient>::Get()->PullKV(key, [i, &handle_offset](const std::string& val) {
+        memcpy(handle_offset.data(), val.data(), 3 * sizeof(IpcMemHandleOffset));
       });
-      OF_CUDA_CHECK(cudaIpcOpenMemHandle(&unique_embeddings_ptr->at(i), handle.at(0),
+      OF_CUDA_CHECK(cudaIpcOpenMemHandle(&unique_embeddings_ptr->at(i), handle_offset.at(0).handle,
                                          cudaIpcMemLazyEnablePeerAccess));
-      OF_CUDA_CHECK(cudaIpcOpenMemHandle(&inverse_indices_ptr->at(i), handle.at(1),
+      unique_embeddings_ptr->at(i) =
+          reinterpret_cast<char*>(unique_embeddings_ptr->at(i)) + handle_offset.at(0).offset;
+
+      OF_CUDA_CHECK(cudaIpcOpenMemHandle(&inverse_indices_ptr->at(i), handle_offset.at(1).handle,
                                          cudaIpcMemLazyEnablePeerAccess));
-      OF_CUDA_CHECK(cudaIpcOpenMemHandle(&is_kernel_start_ptr->at(i), handle.at(2),
+      inverse_indices_ptr->at(i) =
+          reinterpret_cast<char*>(inverse_indices_ptr->at(i)) + handle_offset.at(1).offset;
+
+      OF_CUDA_CHECK(cudaIpcOpenMemHandle(&is_kernel_start_ptr->at(i), handle_offset.at(2).handle,
                                          cudaIpcMemLazyEnablePeerAccess));
+      is_kernel_start_ptr->at(i) =
+          reinterpret_cast<char*>(is_kernel_start_ptr->at(i)) + handle_offset.at(2).offset;
+      LOG(ERROR) << "rank " << parallel_id << " i " << i << " unique_embeddings_ptr "
+                 << unique_embeddings_ptr->at(i) << " offset " << handle_offset.at(0).offset
+                 << " inverse_indices_ptr " << handle_offset.at(1).offset;
+      if (i == 0) {
+        DumpToFile(ctx->stream(), "remote_0_cur_rank_embeddings", parallel_id, 10 * sizeof(half),
+                   inverse_indices_ptr->at(i));
+      }
     }
-    // LOG(ERROR) << "rank " << parallel_id << " i " << i << " unique_embeddings_ptr "
-    //           << unique_embeddings_ptr->at(i) << " inverse_indices_ptr "
-    //           << inverse_indices_ptr->at(i) <<"is_kernel_start_ptr" <<
-    //           is_kernel_start_ptr->at(i);
   }
 }
 
@@ -162,14 +206,6 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
     size_t is_kernel_start_size = GetCudaAlignedSize(sizeof(int32_t));
     OF_CUDA_CHECK(cudaMalloc(&is_kernel_start_ptr_.at(parallel_id), is_kernel_start_size));
     OF_CUDA_CHECK(cudaMemset(is_kernel_start_ptr_.at(parallel_id), 0, is_kernel_start_size));
-    size_t unique_embeddings_size =
-        ctx->TensorDesc4ArgNameAndIndex("cur_rank_embeddings", 0)->shape().elem_cnt()
-        * sizeof(half);
-    OF_CUDA_CHECK(cudaMalloc(&unique_embeddings_ptr_.at(parallel_id), unique_embeddings_size));
-    size_t cur_rank_inverse_indices_size =
-        ctx->TensorDesc4ArgNameAndIndex("cur_rank_inverse_indices", 0)->shape().elem_cnt()
-        * sizeof(IDX);
-    OF_CUDA_CHECK(cudaMalloc(&inverse_indices_ptr_.at(parallel_id), cur_rank_inverse_indices_size));
   }
 
   ~DataShuffleKernelState() {
@@ -231,15 +267,6 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
       GetPtrs(ctx, kernel_state->UniqueEmbeddings(), kernel_state->InverseIndices(),
               kernel_state->IsKernelStart());
     }
-    cudaMemcpyAsync(kernel_state->UniqueEmbeddings()->at(parallel_id),
-                    ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr(),
-                    ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->shape_view().elem_cnt()
-                        * sizeof(half),
-                    cudaMemcpyDefault, cuda_stream);
-    cudaMemcpyAsync(kernel_state->InverseIndices()->at(parallel_id),
-                    cur_rank_inverse_indices->dptr(),
-                    cur_rank_inverse_indices->shape_view().elem_cnt() * sizeof(IDX),
-                    cudaMemcpyDefault, cuda_stream);
     Param<T, IDX, pack_size, 8> param;
     CHECK_LE(parallel_num, 8);
     param.embedding_ptr = reinterpret_cast<Pack<T, pack_size>*>(embeddings->mut_dptr<T>());
