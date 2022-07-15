@@ -73,7 +73,7 @@ __global__ void EmbeddingGraidientShuffleCudaKernel(int64_t parallel_id, int64_t
       in_index_offset += param.num_unique_matrix[rank_id * parallel_num + k];
     }
     const IDX* cur_rank_inverse_indices_ptr =
-        param.cur_rank_inverse_indices[rank_id] + cur_rank_index_offset;
+        param.cur_rank_inverse_indices[parallel_id] + cur_rank_index_offset;
     const Pack<T, pack_size>* unique_partitioned_embedding_grad_ptr =
         param.unique_partitioned_embedding_grads[rank_id] + in_index_offset * embedding_num_pack;
     Pack<T, pack_size>* cur_rank_unique_embedding_grad_ptr =
