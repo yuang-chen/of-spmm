@@ -259,7 +259,8 @@ void LaunchMemsetCurRankEmbeddingGrad(cudaStream_t stream, size_t count, int64_t
 }  // namespace
 
 template<typename T, typename IDX>
-class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel, public user_op::CudaGraphSupport{
+class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
+                                                 public user_op::CudaGraphSupport {
  public:
   EmbeddingGraidientShuffleP2PKernel() : current_iter_(0) {}
   ~EmbeddingGraidientShuffleP2PKernel() override = default;
