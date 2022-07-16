@@ -307,13 +307,16 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel {
     param.cur_rank_inverse_indices = reinterpret_cast<const IDX*>(cur_rank_inverse_indices->dptr());
     param.num_unique_matrix = reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr());
     int64_t embedding_num_pack = embedding_size / pack_size;
-    // OF_CUDA_CHECK(cudaMemsetCurRankEmbeddingGradAsync(
-    //    cur_rank_unique_embedding_grad->mut_dptr(), 0,
-    //    cur_rank_unique_embedding_grad->shape_view().elem_cnt() * sizeof(T), cuda_stream));
-    LaunchMemsetCurRankEmbeddingGrad(
-        cuda_stream, cur_rank_unique_embedding_grad->shape_view().elem_cnt(), embedding_size,
-        parallel_id, parallel_num, reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr()),
-        cur_rank_unique_embedding_grad->mut_dptr<T>());
+    if (only_zero_valid_grad) {
+      LaunchMemsetCurRankEmbeddingGrad(
+          cuda_stream, cur_rank_unique_embedding_grad->shape_view().elem_cnt(), embedding_size,
+          parallel_id, parallel_num, reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr()),
+          cur_rank_unique_embedding_grad->mut_dptr<T>());
+    } else {
+      OF_CUDA_CHECK(cudaMemsetCurRankEmbeddingGradAsync(
+          cur_rank_unique_embedding_grad->mut_dptr(), 0,
+          cur_rank_unique_embedding_grad->shape_view().elem_cnt() * sizeof(T), cuda_stream));
+    }
     BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     EmbeddingGraidientShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
