@@ -194,6 +194,63 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
 
 constexpr int pack_size = 2;
 
+template<typename T, size_t pack>
+__global__ void MemsetCurRankEmbeddingGrad(int64_t parallel_id, int64_t parallel_num,
+                                           int64_t vector_size, const uint32_t* num_unique_matrix,
+                                           T* dst) {
+  size_t count = 0;
+  for (int i = 0; i < parallel_num; ++i) {
+    count += num_unique_matrix[i * parallel_num + parallel_id] * vector_size;
+  }
+  const size_t pack_count = count / pack;
+  Pack<T, pack> pack_value;
+  for (int i = 0; i < pack; ++i) { pack_value.elem[i] = static_cast<T>(0); }
+  auto* pack_dst = reinterpret_cast<Pack<T, pack>*>(dst);
+  CUDA_1D_KERNEL_LOOP_T(size_t, i, pack_count) { pack_dst[i] = pack_value; }
+  T* tail_dst = dst + pack_count * pack;
+  const size_t tail_count = count - pack_count * pack;
+  CUDA_1D_KERNEL_LOOP_T(size_t, i, tail_count) { tail_dst[i] = static_cast<T>(0); }
+}
+
+template<typename T, size_t pack>
+typename std::enable_if<(pack != 0), void>::type LaunchPackMemsetCurRankEmbeddingGrad(
+    cudaStream_t stream, const uint32_t* num_unique_matrix, T* ptr, size_t count,
+    int64_t vector_size, int64_t parallel_id, int64_t parallel_num) {
+  MemsetCurRankEmbeddingGrad<T, pack>
+      <<<BlocksNum4ThreadsNum(count / pack), kCudaThreadsNumPerBlock, 0, stream>>>(
+          parallel_id, parallel_num, vector_size, num_unique_matrix, ptr);
+}
+
+template<typename T, size_t pack>
+typename std::enable_if<(pack == 0), void>::type LaunchPackMemsetCurRankEmbeddingGrad(
+    cudaStream_t stream, const uint32_t* num_unique_matrix, T* ptr, size_t count,
+    int64_t vector_size, int64_t parallel_id, int64_t parallel_num) {
+  LOG(FATAL) << "wrong alignment";
+}
+
+template<typename T>
+void LaunchMemsetCurRankEmbeddingGrad(cudaStream_t stream, size_t count, int64_t vector_size,
+                                      int64_t parallel_id, int64_t parallel_num,
+                                      const uint32_t* num_unique_matrix, T* ptr) {
+  auto uintptr = reinterpret_cast<std::uintptr_t>(ptr);
+  if (uintptr % 16 == 0) {
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 16 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+                                                            vector_size, parallel_id, parallel_num);
+  } else if (uintptr % 8 == 0) {
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 8 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+                                                           vector_size, parallel_id, parallel_num);
+  } else if (uintptr % 4 == 0) {
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 4 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+                                                           vector_size, parallel_id, parallel_num);
+  } else if (uintptr % 2 == 0) {
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 2 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+                                                           vector_size, parallel_id, parallel_num);
+  } else {
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 1 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+                                                           vector_size, parallel_id, parallel_num);
+  }
+}
+
 }  // namespace
 
 template<typename T, typename IDX>
@@ -250,13 +307,17 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel {
     param.cur_rank_inverse_indices = reinterpret_cast<const IDX*>(cur_rank_inverse_indices->dptr());
     param.num_unique_matrix = reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr());
     int64_t embedding_num_pack = embedding_size / pack_size;
-    OF_CUDA_CHECK(cudaMemsetAsync(
-        cur_rank_unique_embedding_grad->mut_dptr(), 0,
-        cur_rank_unique_embedding_grad->shape_view().elem_cnt() * sizeof(T), cuda_stream));
+    // OF_CUDA_CHECK(cudaMemsetCurRankEmbeddingGradAsync(
+    //    cur_rank_unique_embedding_grad->mut_dptr(), 0,
+    //    cur_rank_unique_embedding_grad->shape_view().elem_cnt() * sizeof(T), cuda_stream));
+    LaunchMemsetCurRankEmbeddingGrad(
+        cuda_stream, cur_rank_unique_embedding_grad->shape_view().elem_cnt(), embedding_size,
+        parallel_id, parallel_num, reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr()),
+        cur_rank_unique_embedding_grad->mut_dptr<T>());
     BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     EmbeddingGraidientShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
-    //BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    // BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     current_iter_++;
   }
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }
