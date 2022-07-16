@@ -273,7 +273,7 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
     EmbeddingShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
     BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num,
-                                            param);  // if in eval,should add last barrier.
+                                            param);  // if in eval, should add last barrier.
 
     current_iter_++;
   }
