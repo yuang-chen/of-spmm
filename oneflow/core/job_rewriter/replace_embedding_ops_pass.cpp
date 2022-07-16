@@ -178,8 +178,8 @@ void BuildEmbeddingShuffle(JobBuilder* job_builder, const std::string& embedding
                            const std::string& num_unique_matrix_lbn,
                            const std::string& embedding_lbn, std::vector<OperatorConf>* add_ops,
                            std::string* new_embeddings_lbn) {
-  user_op::UserOpConfWrapperBuilder embedding_shuffle_op_builder(embedding_op.op_name()
-                                                                 + "_embedding_shuffle");
+  user_op::UserOpConfWrapperBuilder embedding_shuffle_op_builder(
+      embedding_op.op_name() + "_embedding_shuffle" + NewUniqueId());
   user_op::UserOpConfWrapper embedding_shuffle_op =
       embedding_shuffle_op_builder.OpTypeName("embedding_shuffle")
           .Input("cur_rank_embeddings", embedding_lbn)
@@ -244,7 +244,7 @@ void BuildEmbeddingGradientShuffle(
         job_builder->job().job_conf().train_conf().has_dynamic_loss_scale_policy();
     const bool only_zero_valid_grad = (!has_clip_grad) && (!has_dynamic_loss_scale);
     user_op::UserOpConfWrapperBuilder embedding_gradient_shuffle_op_builder(
-        embedding_op.op_name() + "_embedding_gradient_shuffle");
+        embedding_op.op_name() + "_embedding_gradient_shuffle" + NewUniqueId());
     user_op::UserOpConfWrapper embedding_gradient_shuffle_op =
         embedding_gradient_shuffle_op_builder.OpTypeName("embedding_gradient_shuffle")
             .Input("cur_rank_inverse_indices", inverse_indices_lbn)
@@ -367,7 +367,8 @@ void BuildIdShuffle(bool use_system_gather, const std::string& embedding_name,
     *unique_table_ids_lbn = unique_op.output("unique_values", 0);
     *inverse_indices_lbn = unique_op.output("inverse_indices", 0);
   } else {
-    user_op::UserOpConfWrapperBuilder id_shuffle_op_builder(embedding_op.op_name() + "_id_shuffle");
+    user_op::UserOpConfWrapperBuilder id_shuffle_op_builder(embedding_op.op_name() + "_id_shuffle"
+                                                            + NewUniqueId());
     id_shuffle_op_builder.OpTypeName("id_shuffle")
         .Input("ids", embedding_op.input("ids", 0))
         .Output("inverse_unique_partition_indices")
@@ -548,7 +549,7 @@ void BuildEmbeddingUpdate(
                               update_skip_if_lbn, l1, l2,
                               optimizer_conf.weight_decay_conf().weight_decay_rate())) {
     user_op::UserOpConfWrapperBuilder fused_embedding_update_put_op_builder(
-        embedding_op.op_name() + "_fused_embedding_update_put");
+        embedding_op.op_name() + "_fused_embedding_update_put" + NewUniqueId());
     user_op::UserOpConfWrapper fused_embedding_update_put_op =
         fused_embedding_update_put_op_builder.OpTypeName("fused_sgd_embedding_update_put")
             .Input("num_unique_ids", num_unique_ids_lbn)
@@ -580,8 +581,8 @@ void BuildEmbeddingUpdate(
     job_builder->AddOps(embedding_parallel_conf, {adam_bias_correction_factor_op.op_conf()});
     return adam_bias_correction_factor_op.output("out", 0);
   };
-  user_op::UserOpConfWrapperBuilder embedding_update_op_builder(embedding_op.op_name()
-                                                                + "_embedding_update");
+  user_op::UserOpConfWrapperBuilder embedding_update_op_builder(
+      embedding_op.op_name() + "_embedding_update" + NewUniqueId());
   std::vector<float> state_constant_init_values;
   if (optimizer_conf.has_naive_conf()) {
     embedding_update_op_builder.OpTypeName("sgd_embedding_update");
@@ -652,7 +653,7 @@ void BuildEmbeddingUpdate(
   embedding_update_new_op_conf->set_stream_name_hint(embedding_name + "_EMBEDDING");
 
   user_op::UserOpConfWrapperBuilder embedding_put_op_builder(embedding_op.op_name()
-                                                             + "_embedding_put");
+                                                             + "_embedding_put" + NewUniqueId());
   user_op::UserOpConfWrapper embedding_put_op =
       embedding_put_op_builder.OpTypeName("embedding_put")
           .Input("num_unique_ids", num_unique_ids_lbn)

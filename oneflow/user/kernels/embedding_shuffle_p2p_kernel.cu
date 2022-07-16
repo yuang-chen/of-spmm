@@ -119,9 +119,7 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
       const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr());
   inverse_indices_ptr->at(parallel_id) =
       const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->dptr());
-  std::string name =
-      ctx->op_name()
-      + std::to_string(num_ids);  // train and eval same op name. do it in pass? or use newUniqueId
+  std::string name = ctx->op_name();
   {
     std::vector<IpcMemHandleOffset> push_handle_offset;
     push_handle_offset.resize(3);
@@ -135,14 +133,14 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
     cudaError_t (*func)(void*, CUpointer_attribute, CUdeviceptr);
     cudaGetDriverEntryPoint("cuPointerGetAttribute", (void**)(&func), cudaEnableDefault);
     void* unique_embeddings_base;
-    func(&unique_embeddings_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
-         (CUdeviceptr)(unique_embeddings_ptr->at(parallel_id)));
+    OF_CUDA_CHECK(func(&unique_embeddings_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
+                       (CUdeviceptr)(unique_embeddings_ptr->at(parallel_id))));
     push_handle_offset.at(0).offset =
         reinterpret_cast<char*>(unique_embeddings_ptr->at(parallel_id))
         - reinterpret_cast<char*>(unique_embeddings_base);
     void* inverse_indices_base;
-    func(&inverse_indices_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
-         (CUdeviceptr)(inverse_indices_ptr->at(parallel_id)));
+    OF_CUDA_CHECK(func(&inverse_indices_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
+                       (CUdeviceptr)(inverse_indices_ptr->at(parallel_id))));
     push_handle_offset.at(1).offset = reinterpret_cast<char*>(inverse_indices_ptr->at(parallel_id))
                                       - reinterpret_cast<char*>(inverse_indices_base);
     push_handle_offset.at(2).offset = 0;
@@ -274,7 +272,8 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
     BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     EmbeddingShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
-    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);  // if in eval,should add last barrier.
+    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num,
+                                            param);  // if in eval,should add last barrier.
 
     current_iter_++;
   }

@@ -347,8 +347,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
     buffer_ptrs_.resize(parallel_num);
     cudaMalloc(&buffer_ptrs_.at(parallel_id), buffer_size);
     cudaMemset(buffer_ptrs_.at(parallel_id), 0, buffer_size);
-    // LOG(ERROR) << "rank " << parallel_id << " make ptr " << buffer_ptrs_.at(parallel_id);
-    std::string name = ctx->op_name() + std::to_string(num_ids);  // train and eval same op name.
+    std::string name = ctx->op_name();
     for (int64_t i = 0; i < parallel_num; ++i) {
       std::string key = name + std::to_string(i);
       if (parallel_id == i) {
@@ -364,7 +363,6 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
         OF_CUDA_CHECK(
             cudaIpcOpenMemHandle(&buffer_ptrs_.at(i), handle, cudaIpcMemLazyEnablePeerAccess));
       }
-      // LOG(ERROR) << "rank " << parallel_id << " i " << i << " " << buffer_ptrs_.at(i);
     }
   }
   ~DataShuffleKernelState() {
@@ -532,7 +530,6 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
     size_t hash_table_capacity = parallel_num * num_ids;
     void* workspace_ptr = buffer_manager.Ptr(IdShuffleBufferType::kWorkspace);
     size_t workspace_size = buffer_manager.Size(IdShuffleBufferType::kWorkspace);
-    // LOG(ERROR) << "launch UniqueAndPartition " << parallel_id << " iter " << current_iter_;
     Param<K, U, IDX, 8> param;
     CHECK_LE(parallel_num, 8);
     for (int i = 0; i < parallel_num; ++i) {

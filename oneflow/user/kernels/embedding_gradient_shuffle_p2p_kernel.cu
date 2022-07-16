@@ -113,9 +113,7 @@ void GetPtrs(user_op::KernelComputeContext* ctx,
       ctx->TensorDesc4ArgNameAndIndex("inverse_unique_partition_indices", 0)->shape().elem_cnt();
   const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
   const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
-  std::string name =
-      ctx->op_name()
-      + std::to_string(num_ids);  // train and eval same op name. do it in pass? or use newUniqueId
+  std::string name = ctx->op_name();
 
   std::vector<cudaIpcMemHandle_t> handle;
   handle.resize(3);
