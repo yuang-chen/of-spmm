@@ -119,12 +119,6 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
       const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr());
   inverse_indices_ptr->at(parallel_id) =
       const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->dptr());
-  if (parallel_id == 0) {
-    DumpToFile(ctx->stream(), "cur_rank_embeddings", parallel_id,
-               ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->shape_view().elem_cnt()
-                   * sizeof(uint32_t),
-               inverse_indices_ptr->at(parallel_id));
-  }
   std::string name =
       ctx->op_name()
       + std::to_string(num_ids);  // train and eval same op name. do it in pass? or use newUniqueId
@@ -152,9 +146,6 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
     push_handle_offset.at(1).offset = reinterpret_cast<char*>(inverse_indices_ptr->at(parallel_id))
                                       - reinterpret_cast<char*>(inverse_indices_base);
     push_handle_offset.at(2).offset = 0;
-    LOG(ERROR) << "rank " << parallel_id << " have base: " << unique_embeddings_base
-               << "unique_embeddings_ptr offset" << push_handle_offset.at(0).offset
-               << " inverse_indices_offset " << push_handle_offset.at(1).offset;
     Singleton<CtrlClient>::Get()->PushKV(
         name + std::to_string(parallel_id),
         std::string(reinterpret_cast<const char*>(push_handle_offset.data()),
@@ -182,13 +173,6 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
                                          cudaIpcMemLazyEnablePeerAccess));
       is_kernel_start_ptr->at(i) =
           reinterpret_cast<char*>(is_kernel_start_ptr->at(i)) + handle_offset.at(2).offset;
-      LOG(ERROR) << "rank " << parallel_id << " i " << i << " unique_embeddings_ptr "
-                 << unique_embeddings_ptr->at(i) << " offset " << handle_offset.at(0).offset
-                 << " inverse_indices_ptr " << handle_offset.at(1).offset;
-      if (i == 0) {
-        DumpToFile(ctx->stream(), "remote_0_cur_rank_embeddings", parallel_id, 10 * sizeof(half),
-                   inverse_indices_ptr->at(i));
-      }
     }
   }
 }
@@ -246,7 +230,11 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
   void Compute(user_op::KernelComputeContext* ctx, user_op::OpKernelState* state,
                const user_op::OpKernelCache*) const override {
     CHECK(!embedding::UseDynamicMemoryAllocation());
-    CHECK(ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_FUSE_EMBEDDING_INTERACTION", false));
+    CHECK(ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_FUSE_EMBEDDING_INTERACTION",
+                              false));  // only support skip last gather.
+    CHECK(ParseBooleanFromEnv("ADD_IDENTITY",
+                              false));  // when no identity, every time the cur_rank_inverse_indices
+                                        // will change becauseof regster num=2.
     auto* kernel_state = dynamic_cast<DataShuffleKernelState<IDX>*>(state);
     CHECK(kernel_state != nullptr);
     const user_op::Tensor* num_unique_matrix = ctx->Tensor4ArgNameAndIndex("num_unique_matrix", 0);
@@ -257,7 +245,6 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
     user_op::Tensor* embeddings = ctx->Tensor4ArgNameAndIndex("embeddings", 0);
     const int64_t embedding_size = ctx->Attr<int64_t>("embedding_size");
     DataType data_type = embeddings->data_type();
-    const int64_t num_ids = inverse_unique_partition_indices->shape_view().elem_cnt();
     const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
     const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
     const bool skip_last_gather = ctx->Attr<bool>("skip_last_gather");
@@ -267,6 +254,11 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
       GetPtrs(ctx, kernel_state->UniqueEmbeddings(), kernel_state->InverseIndices(),
               kernel_state->IsKernelStart());
     }
+    CHECK_EQ(kernel_state->UniqueEmbeddings()->at(parallel_id),
+             ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr())
+        << parallel_id;
+    CHECK_EQ(kernel_state->InverseIndices()->at(parallel_id), cur_rank_inverse_indices->dptr())
+        << parallel_id;
     Param<T, IDX, pack_size, 8> param;
     CHECK_LE(parallel_num, 8);
     param.embedding_ptr = reinterpret_cast<Pack<T, pack_size>*>(embeddings->mut_dptr<T>());
@@ -282,38 +274,14 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
     BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     EmbeddingShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
+    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);  // if in eval,should add last barrier.
 
     current_iter_++;
   }
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }
   mutable int64_t current_iter_;
 };
-/*
-#define REGISTER_CUDA_EMBEDDING_SHUFFLE_P2P_KERNEL(t_dtype_pair, idx_dtype_pair)                 \
-  REGISTER_USER_KERNEL("embedding_shuffle")                                                      \
-      .SetCreateFn<EmbeddingShuffleP2PKernel<OF_PP_PAIR_FIRST(t_dtype_pair),                     \
-                                             OF_PP_PAIR_FIRST(idx_dtype_pair)>>()                \
-      .SetIsMatchedHob(                                                                          \
-          (user_op::HobDeviceType() == DeviceType::kCUDA)                                        \
-          && (user_op::HobDataType("cur_rank_embeddings", 0) == OF_PP_PAIR_SECOND(t_dtype_pair)) \
-          && (user_op::HobDataType("num_unique_matrix", 0) == OF_PP_PAIR_SECOND(idx_dtype_pair)) \
-          && ParseBooleanFromEnv("EMBEDDING_SHUFFLE_USE_P2P_KERNEL", false))                     \
-      .SetInferTmpSizeFn([](user_op::InferContext* ctx) {                                        \
-        const user_op::TensorDesc& inverse_unique_partition_indices =                            \
-            ctx->InputTensorDesc("inverse_unique_partition_indices", 0);                         \
-        const int64_t num_ids = inverse_unique_partition_indices.shape().elem_cnt();             \
-        const int64_t parallel_num = ctx->parallel_ctx().parallel_num();                         \
-        const int64_t cur_rank_max_num_ids = parallel_num * num_ids;                             \
-        const int64_t embedding_size = ctx->Attr<int64_t>("embedding_size");                     \
-        size_t tmp_size = 0;                                                                     \
-        size_t reverse_cur_rank_embeddings_size = GetCudaAlignedSize(                            \
-            cur_rank_max_num_ids * embedding_size * sizeof(OF_PP_PAIR_FIRST(t_dtype_pair)));     \
-        size_t recv_unique_embeddings_size = reverse_cur_rank_embeddings_size;                   \
-        tmp_size = reverse_cur_rank_embeddings_size + recv_unique_embeddings_size;               \
-      });
-OF_PP_SEQ_PRODUCT_FOR_EACH_TUPLE(REGISTER_CUDA_EMBEDDING_SHUFFLE_P2P_KERNEL,
-                                 FLOATING_DATA_TYPE_SEQ HALF_DATA_TYPE_SEQ, IDX_DATA_TYPE_SEQ)
-*/
+
 REGISTER_USER_KERNEL("embedding_shuffle")
     .SetCreateFn<EmbeddingShuffleP2PKernel<half, uint32_t>>()
     .SetIsMatchedHob((user_op::HobDeviceType() == DeviceType::kCUDA)
