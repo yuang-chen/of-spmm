@@ -25,6 +25,7 @@ limitations under the License.
 #include "oneflow/core/control/ctrl_client.h"
 #include "oneflow/core/ep/include/primitive/memcpy.h"
 #include "absl/strings/str_cat.h"
+#include "oneflow/core/kernel/cuda_graph_support.h"
 
 namespace oneflow {
 
@@ -179,19 +180,22 @@ template<typename IDX>
 class DataShuffleKernelState final : public user_op::OpKernelState {
  public:
   explicit DataShuffleKernelState(user_op::KernelInitContext* ctx)
-      : device_index_(-1), parallel_desc_(ctx->parallel_desc()) {
-    const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
+      : device_index_(-1),
+        parallel_desc_(ctx->parallel_desc()),
+        parallel_id_(ctx->parallel_ctx().parallel_id()) {
+    OF_CUDA_CHECK(cudaGetDevice(&device_index_));
     int64_t parallel_num = parallel_desc_.parallel_num();
     unique_embeddings_ptr_.resize(parallel_num);
     inverse_indices_ptr_.resize(parallel_num);
     is_kernel_start_ptr_.resize(parallel_num);
     size_t is_kernel_start_size = GetCudaAlignedSize(sizeof(int32_t));
-    OF_CUDA_CHECK(cudaMalloc(&is_kernel_start_ptr_.at(parallel_id), is_kernel_start_size));
-    OF_CUDA_CHECK(cudaMemset(is_kernel_start_ptr_.at(parallel_id), 0, is_kernel_start_size));
+    OF_CUDA_CHECK(cudaMalloc(&is_kernel_start_ptr_.at(parallel_id_), is_kernel_start_size));
+    OF_CUDA_CHECK(cudaMemset(is_kernel_start_ptr_.at(parallel_id_), 0, is_kernel_start_size));
   }
 
   ~DataShuffleKernelState() {
-    // free
+    CudaCurrentDeviceGuard guard(device_index_);
+    OF_CUDA_CHECK(cudaFree(is_kernel_start_ptr_.at(parallel_id_)));
   }
 
   std::vector<void*>* UniqueEmbeddings() { return &unique_embeddings_ptr_; }
@@ -203,6 +207,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
  private:
   int device_index_;
   ParallelDesc parallel_desc_;
+  int64_t parallel_id_;
   std::vector<void*> unique_embeddings_ptr_;
   std::vector<void*> inverse_indices_ptr_;
   std::vector<void*> is_kernel_start_ptr_;
@@ -213,7 +218,7 @@ constexpr int pack_size = 4;
 }  // namespace
 
 template<typename T, typename IDX>
-class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
+class EmbeddingShuffleP2PKernel final : public user_op::OpKernel, public user_op::CudaGraphSupport {
  public:
   EmbeddingShuffleP2PKernel() : current_iter_(0) {}
   ~EmbeddingShuffleP2PKernel() override = default;
@@ -221,6 +226,15 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel {
   std::shared_ptr<user_op::OpKernelState> CreateOpKernelState(
       user_op::KernelInitContext* ctx) const override {
     return std::make_shared<DataShuffleKernelState<IDX>>(ctx);
+  }
+
+  bool IsReadyForCapture(user_op::KernelComputeContext* ctx, user_op::OpKernelState* state,
+                         const user_op::OpKernelCache* cache) const override {
+    if (current_iter_ == 0) {
+      return false;
+    } else {
+      return true;
+    }
   }
 
  private:

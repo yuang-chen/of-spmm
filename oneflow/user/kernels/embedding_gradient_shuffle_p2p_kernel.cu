@@ -23,6 +23,7 @@ limitations under the License.
 #include "oneflow/core/cuda/atomic.cuh"
 #include "oneflow/core/embedding/embedding_manager.h"
 #include "oneflow/core/control/ctrl_client.h"
+#include "oneflow/core/kernel/cuda_graph_support.h"
 
 namespace oneflow {
 
@@ -165,18 +166,21 @@ template<typename IDX>
 class DataShuffleKernelState final : public user_op::OpKernelState {
  public:
   explicit DataShuffleKernelState(user_op::KernelInitContext* ctx)
-      : device_index_(-1), parallel_desc_(ctx->parallel_desc()) {
-    const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
+      : device_index_(-1),
+        parallel_desc_(ctx->parallel_desc()),
+        parallel_id_(ctx->parallel_ctx().parallel_id()) {
+    OF_CUDA_CHECK(cudaGetDevice(&device_index_));
     int64_t parallel_num = parallel_desc_.parallel_num();
     unique_partitioned_embedding_grad_ptr_.resize(parallel_num);
     is_kernel_start_ptr_.resize(parallel_num);
     size_t is_kernel_start_size = GetCudaAlignedSize(sizeof(int32_t));
-    OF_CUDA_CHECK(cudaMalloc(&is_kernel_start_ptr_.at(parallel_id), is_kernel_start_size));
-    OF_CUDA_CHECK(cudaMemset(is_kernel_start_ptr_.at(parallel_id), 0, is_kernel_start_size));
+    OF_CUDA_CHECK(cudaMalloc(&is_kernel_start_ptr_.at(parallel_id_), is_kernel_start_size));
+    OF_CUDA_CHECK(cudaMemset(is_kernel_start_ptr_.at(parallel_id_), 0, is_kernel_start_size));
   }
 
   ~DataShuffleKernelState() {
-    // free
+    CudaCurrentDeviceGuard guard(device_index_);
+    OF_CUDA_CHECK(cudaFree(is_kernel_start_ptr_.at(parallel_id_)));
   }
 
   std::vector<void*>* UniquePartitionedEmbeddingGrads() {
@@ -188,6 +192,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
  private:
   int device_index_;
   ParallelDesc parallel_desc_;
+  int64_t parallel_id_;
   std::vector<void*> unique_partitioned_embedding_grad_ptr_;
   std::vector<void*> is_kernel_start_ptr_;
 };
@@ -254,7 +259,7 @@ void LaunchMemsetCurRankEmbeddingGrad(cudaStream_t stream, size_t count, int64_t
 }  // namespace
 
 template<typename T, typename IDX>
-class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel {
+class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel, public user_op::CudaGraphSupport{
  public:
   EmbeddingGraidientShuffleP2PKernel() : current_iter_(0) {}
   ~EmbeddingGraidientShuffleP2PKernel() override = default;
@@ -262,6 +267,15 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel {
   std::shared_ptr<user_op::OpKernelState> CreateOpKernelState(
       user_op::KernelInitContext* ctx) const override {
     return std::make_shared<DataShuffleKernelState<IDX>>(ctx);
+  }
+
+  bool IsReadyForCapture(user_op::KernelComputeContext* ctx, user_op::OpKernelState* state,
+                         const user_op::OpKernelCache* cache) const override {
+    if (current_iter_ == 0) {
+      return false;
+    } else {
+      return true;
+    }
   }
 
  private:
@@ -313,7 +327,7 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel {
           parallel_id, parallel_num, reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr()),
           cur_rank_unique_embedding_grad->mut_dptr<T>());
     } else {
-      OF_CUDA_CHECK(cudaMemsetCurRankEmbeddingGradAsync(
+      OF_CUDA_CHECK(cudaMemsetAsync(
           cur_rank_unique_embedding_grad->mut_dptr(), 0,
           cur_rank_unique_embedding_grad->shape_view().elem_cnt() * sizeof(T), cuda_stream));
     }

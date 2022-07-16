@@ -324,14 +324,15 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   explicit DataShuffleKernelState(user_op::KernelInitContext* ctx)
       : device_index_(-1),
         stream_name_(EagerNcclCommMgr::kDefaultStreamName),
-        parallel_desc_(ctx->parallel_desc()) {
+        parallel_desc_(ctx->parallel_desc()),
+        parallel_id_(ctx->parallel_ctx().parallel_id()) {
     OF_CUDA_CHECK(cudaGetDevice(&device_index_));
     if (ctx->op_conf().has_stream_name_hint()) { stream_name_ = ctx->op_conf().stream_name_hint(); }
     int64_t parallel_num = parallel_desc_.parallel_num();
     OF_CUDA_CHECK(
         cudaMallocHost(&host_num_unique_matrix_, parallel_num * parallel_num * sizeof(IDX)));
     const std::string& embedding_name = ctx->Attr<std::string>("embedding_name");
-    const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
+    const int64_t parallel_id = parallel_id_;
     embedding_state_ = Singleton<embedding::EmbeddingManager>::Get()->GetEmbeddingState(
         embedding_name, parallel_id);
     const int64_t num_ids = ctx->TensorDesc4ArgNameAndIndex("ids", 0)->shape().elem_cnt();
@@ -368,10 +369,8 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   ~DataShuffleKernelState() {
     CudaCurrentDeviceGuard guard(device_index_);
     OF_CUDA_CHECK(cudaFreeHost(host_num_unique_matrix_));
-    // TODO:cudafree
+    OF_CUDA_CHECK(cudaFree(buffer_ptrs_.at(parallel_id_)));
   }
-
-  ncclComm_t comm() { return GetOrCreate().comm; }
 
   IDX* HostNumUniqueMatrix() { return host_num_unique_matrix_; }
 
@@ -411,34 +410,11 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   }
 
  private:
-  struct Comm {
-    Comm(ncclComm_t comm) : comm(comm) {}
-    ncclComm_t comm;
-  };
-
-  const Comm& GetOrCreate() {
-    if (!comm_) { Init(); }
-    return *comm_;
-  }
-
-  void Init() {
-    std::set<std::pair<int64_t, int64_t>> device_set;
-    for (int64_t parallel_id = 0; parallel_id < parallel_desc_.parallel_num(); ++parallel_id) {
-      int64_t machine_id = CHECK_JUST(parallel_desc_.MachineId4ParallelId(parallel_id));
-      int64_t device_id = CHECK_JUST(parallel_desc_.DeviceId4ParallelId(parallel_id));
-      device_set.emplace(std::make_pair(machine_id, device_id));
-    }
-    EagerNcclCommMgr* comm_mgr = CHECK_NOTNULL(Singleton<EagerNcclCommMgr>::Get());
-    ncclComm_t comm;
-    comm = comm_mgr->GetCommForDeviceAndStreamName(device_set, stream_name_);
-    comm_.reset(new Comm(comm));
-  }
-
   int device_index_;
   bool has_independent_stream_;
   std::string stream_name_;
   ParallelDesc parallel_desc_;
-  std::unique_ptr<Comm> comm_;
+  int64_t parallel_id_;
   IDX* host_num_unique_matrix_;
   std::vector<void*> buffer_ptrs_;
   size_t num_partitioned_unique_size_;
