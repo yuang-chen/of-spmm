@@ -79,9 +79,9 @@ __global__ void EmbeddingGraidientShuffleCudaKernel(int64_t parallel_id, int64_t
         param.unique_partitioned_embedding_grads[rank_id] + in_index_offset * embedding_num_pack;
     Pack<T, pack_size>* cur_rank_unique_embedding_grad_ptr =
         param.cur_rank_unique_embedding_grad_ptr;
-    CUDA_1D_KERNEL_LOOP_T(
-        int, j,
-        param.num_unique_matrix[rank_id * parallel_num + parallel_id] * embedding_num_pack) {
+    const int copy_cnt =
+        param.num_unique_matrix[rank_id * parallel_num + parallel_id] * embedding_num_pack;
+    CUDA_1D_KERNEL_LOOP_T(int, j, copy_cnt) {
       int in_row_id = j / embedding_num_pack;
       int col_id = j - in_row_id * embedding_num_pack;
       int out_row_id = cur_rank_inverse_indices_ptr[in_row_id];
@@ -331,7 +331,9 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
           cur_rank_unique_embedding_grad->shape_view().elem_cnt() * sizeof(T), cuda_stream));
     }
     BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
-    EmbeddingGraidientShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
+    const int num_blocks =
+        2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
+    EmbeddingGraidientShuffleCudaKernel<<<num_blocks, 1024, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
     // BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     current_iter_++;

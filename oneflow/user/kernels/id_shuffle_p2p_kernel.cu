@@ -454,8 +454,10 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
 
     param.num_unique_matrix = num_unique_matrix_ptr;
     BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    const int num_blocks =
+        2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
     HashTableUniquePairs<K, U, IDX, embedding::LocalUniqueHash>
-        <<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
+        <<<num_blocks, 1024, 0, cuda_stream>>>(
             hash_table_capacity, num_ids, parallel_num, parallel_id, cur_rank_num_unique_ids_ptr,
             reinterpret_cast<TableEntry<K>*>(workspace_ptr), param,
             reinterpret_cast<K*>(cur_rank_unique_ids->mut_dptr()),

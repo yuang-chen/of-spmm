@@ -80,9 +80,9 @@ __global__ void EmbeddingShuffleCudaKernel(int64_t parallel_id, int64_t parallel
     const IDX* inverse_indices_ptr = param.inverse_indices[rank_id] + in_index_offset;
     const Pack<T, pack_size>* unique_embeddings_ptr = param.unique_embeddings[rank_id];
     Pack<T, pack_size>* embedding_ptr = param.embedding_ptr + out_index_offset * embedding_num_pack;
-    CUDA_1D_KERNEL_LOOP_T(
-        int, j,
-        param.num_unique_matrix[parallel_id * parallel_num + rank_id] * embedding_num_pack) {
+    const int copy_cnt =
+        param.num_unique_matrix[parallel_id * parallel_num + rank_id] * embedding_num_pack;
+    CUDA_1D_KERNEL_LOOP_T(int, j, copy_cnt) {
       int out_row_id = j / embedding_num_pack;
       int in_row_id = inverse_indices_ptr[out_row_id];
       int col_id = j - out_row_id * embedding_num_pack;
@@ -280,10 +280,11 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel, public user_op
     }
     param.num_unique_matrix = reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr());
     int64_t embedding_num_pack = embedding_size / pack_size;
-
     BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
-    EmbeddingShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
-        parallel_id, parallel_num, embedding_num_pack, param);
+    const int num_blocks =
+        2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
+    EmbeddingShuffleCudaKernel<<<num_blocks, 1024, 0, cuda_stream>>>(parallel_id, parallel_num,
+                                                                     embedding_num_pack, param);
     if (!ctx->Attr<bool>("is_train")) {
       BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(
           parallel_id, parallel_num,
