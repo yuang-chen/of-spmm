@@ -31,6 +31,7 @@ limitations under the License.
 #include "oneflow/core/framework/global_param_grad_sync_mode.h"
 #include "oneflow/core/common/container_util.h"
 #include "oneflow/core/profiler/profiler.h"
+#include "oneflow/core/common/env_var/autograd.h"
 
 namespace oneflow {
 namespace one {
@@ -151,11 +152,16 @@ Maybe<void> AutogradEngine::RunBackwardAndSaveGrads4LeafTensorIf(const TensorTup
   JUST(CheckGlobalTensorsMeta(outputs));
   JUST(CheckGlobalTensorsMeta(out_grads));
   DisableCheckGlobalTensorMetaScope disable_meta_check;
-  // Put outputs into kTmpCompute stream for reducing blocking time of outputs[i].numpy() in main
-  // thread.
-  auto copied_outputs = JUST(TryCopyForSmallTensor(outputs));
-  JUST(TouchInTmpComputeStream(outputs));
-  return RunBackwardAndSaveGrads4LeafTensor(*copied_outputs, out_grads, retain_graph, create_graph);
+  if (ThreadLocalEnvBool<ONEFLOW_AD_PUT_LOSS_ON_TMP_COMPUTE_STREAM>()) {
+    // Put outputs into kTmpCompute stream for reducing blocking time of outputs[i].numpy() in main
+    // thread.
+    auto copied_outputs = JUST(TryCopyForSmallTensor(outputs));
+    JUST(TouchInTmpComputeStream(outputs));
+    return RunBackwardAndSaveGrads4LeafTensor(*copied_outputs, out_grads, retain_graph,
+                                              create_graph);
+  } else {
+    return RunBackwardAndSaveGrads4LeafTensor(outputs, out_grads, retain_graph, create_graph);
+  }
 }
 
 Maybe<TensorTuple> AutogradEngine::RunBackwardAndReturnInputsTensorGradIf(
@@ -224,12 +230,18 @@ Maybe<bool> FunctionNode::Apply(bool create_graph) {
   JUST(backward_fn_->body(output_grads, &input_grads, create_graph));
   for (int i = 0; i < input_meta_data_.size(); ++i) {
     if (JUST(VectorAt(input_grads, i))) {
-      CHECK_NOTNULL_OR_RETURN(input_meta_data_.at(i))
+      CHECK_NOTNULL_OR_RETURN(input_meta_data_[i])
           << name_
           << " calculate grad for tensor which requires_grad is False. Please submit an issue in "
              "`https://github.com/Oneflow-Inc/oneflow/issues` and we will fix it as soon as "
              "possible";
-      JUST(input_meta_data_.at(i)->current_grad()->PushPartialTensor(input_grads.at(i)));
+      JUST(input_meta_data_[i]->current_grad()->PushPartialTensor(JUST(VectorAt(input_grads, i))));
+    } else {
+      CHECK_OR_RETURN(!input_meta_data_[i])
+          << name() << "'s input[" << i
+          << "] need calculate grad but got nullptr. Please submit an issue in "
+             "`https://github.com/Oneflow-Inc/oneflow/issues` and we will fix it as soon as "
+             "possible;";
     }
   }
   return true;
