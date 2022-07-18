@@ -56,15 +56,15 @@ struct alignas(sizeof(T) * pack_size) Pack {
 template<typename T, typename IDX, int pack_size, int N>
 struct Param {
   IDX* inverse_indices[N];
-  const Pack<T, pack_size>* unique_embeddings[N];
+  Pack<T, pack_size>* unique_embeddings[N];
   int32_t* is_kernel_start[N];
   const IDX* num_unique_matrix;
   Pack<T, pack_size>* embedding_ptr;
 };
 
 template<typename T, typename IDX, int pack_size, int N>
-__global__ void EmbeddingShuffleCudaKernel(int64_t parallel_id, int64_t parallel_num,
-                                           int64_t embedding_num_pack,
+__global__ void EmbeddingShuffleCudaKernel(int parallel_id, int parallel_num,
+                                           int embedding_num_pack,
                                            Param<T, IDX, pack_size, N> param) {
 #pragma unroll 1
   for (int i = 0; i < parallel_num; ++i) {
@@ -92,6 +92,48 @@ __global__ void EmbeddingShuffleCudaKernel(int64_t parallel_id, int64_t parallel
 }
 
 template<typename T, typename IDX, int pack_size, int N>
+__global__ void EmbeddingShuffleCopyKernel(int parallel_id, int parallel_num,
+                                           int embedding_num_pack,
+                                           Param<T, IDX, pack_size, N> param) {
+#pragma unroll 1
+  for (int i = 0; i < parallel_num; ++i) {
+    int rank_id = (parallel_id + i) % parallel_num;
+    IDX out_index_offset = 0;
+    for (int k = 0; k < rank_id; ++k) {
+      out_index_offset += param.num_unique_matrix[parallel_id * parallel_num + k];
+    }
+    IDX in_index_offset = 0;
+    for (int k = 0; k < parallel_id; ++k) {
+      in_index_offset += param.num_unique_matrix[k * parallel_num + rank_id];
+    }
+    const Pack<T, pack_size>* unique_embeddings_ptr =
+        param.unique_embeddings[rank_id] + in_index_offset * embedding_num_pack;
+    Pack<T, pack_size>* embedding_ptr = param.embedding_ptr + out_index_offset * embedding_num_pack;
+    const int copy_cnt =
+        param.num_unique_matrix[parallel_id * parallel_num + rank_id] * embedding_num_pack;
+    CUDA_1D_KERNEL_LOOP_T(int, j, copy_cnt) { embedding_ptr[j] = unique_embeddings_ptr[j]; }
+  }
+}
+
+template<typename T, typename IDX, int pack_size>
+__global__ void GatherKernel(int parallel_id, int parallel_num, int embedding_num_pack,
+                             const IDX* num_unique_matrix, const IDX* inverse_indices,
+                             const Pack<T, pack_size>* unique_embeddings,
+                             Pack<T, pack_size>* gather_out_unique_embeddings) {
+  int cur_rank_num_ids = 0;
+  for (int i = 0; i < parallel_num; ++i) {
+    cur_rank_num_ids += num_unique_matrix[i * parallel_num + parallel_id];
+  }
+  int out_cnt = cur_rank_num_ids * embedding_num_pack;
+  CUDA_1D_KERNEL_LOOP_T(int, i, out_cnt) {
+    int out_row_id = i / embedding_num_pack;
+    int in_row_id = inverse_indices[out_row_id];
+    int col_id = i - out_row_id * embedding_num_pack;
+    gather_out_unique_embeddings[i] = unique_embeddings[in_row_id * embedding_num_pack + col_id];
+  }
+}
+
+template<typename T, typename IDX, int pack_size, int N>
 __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
                               Param<T, IDX, pack_size, N> param) {
   int count = param.is_kernel_start[parallel_id][parallel_id];
@@ -114,10 +156,16 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
       ctx->TensorDesc4ArgNameAndIndex("inverse_unique_partition_indices", 0)->shape().elem_cnt();
   const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
   const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
-  unique_embeddings_ptr->at(parallel_id) =
-      const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr());
   inverse_indices_ptr->at(parallel_id) =
       const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->dptr());
+  if (ParseBooleanFromEnv("EMBEDDING_SHUFFLE_GATHER_THAN_COPY", true)) {
+    unique_embeddings_ptr->at(parallel_id) =
+        ctx->Tensor4ArgNameAndIndex("tmp_buffer", 0)->mut_dptr();
+  } else {
+    unique_embeddings_ptr->at(parallel_id) =
+        const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr());
+  }
+
   std::string name = ctx->op_name();
   {
     std::vector<IpcMemHandleOffset> push_handle_offset;
@@ -264,9 +312,6 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel, public user_op
       GetPtrs(ctx, kernel_state->UniqueEmbeddings(), kernel_state->InverseIndices(),
               kernel_state->IsKernelStart());
     }
-    CHECK_EQ(kernel_state->UniqueEmbeddings()->at(parallel_id),
-             ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr())
-        << parallel_id;
     CHECK_EQ(kernel_state->InverseIndices()->at(parallel_id), cur_rank_inverse_indices->dptr())
         << parallel_id;
     Param<T, IDX, pack_size, 8> param;
@@ -283,8 +328,26 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel, public user_op
     BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     const int num_blocks =
         2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
-    EmbeddingShuffleCudaKernel<<<num_blocks, 1024, 0, cuda_stream>>>(parallel_id, parallel_num,
-                                                                     embedding_num_pack, param);
+
+    if (ParseBooleanFromEnv("EMBEDDING_SHUFFLE_GATHER_THAN_COPY", true)) {
+      CHECK_EQ(kernel_state->UniqueEmbeddings()->at(parallel_id),
+               ctx->Tensor4ArgNameAndIndex("tmp_buffer", 0)->dptr())
+          << parallel_id;
+      GatherKernel<<<num_blocks, 1024, 0, cuda_stream>>>(
+          parallel_id, parallel_num, embedding_num_pack, param.num_unique_matrix,
+          param.inverse_indices[parallel_id],
+          reinterpret_cast<const Pack<T, pack_size>*>(
+              ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr()),
+          param.unique_embeddings[parallel_id]);
+      EmbeddingShuffleCopyKernel<<<num_blocks, 1024, 0, cuda_stream>>>(parallel_id, parallel_num,
+                                                                       embedding_num_pack, param);
+    } else {
+      CHECK_EQ(kernel_state->UniqueEmbeddings()->at(parallel_id),
+               ctx->Tensor4ArgNameAndIndex("cur_rank_embeddings", 0)->dptr())
+          << parallel_id;
+      EmbeddingShuffleCudaKernel<<<num_blocks, 1024, 0, cuda_stream>>>(parallel_id, parallel_num,
+                                                                       embedding_num_pack, param);
+    }
     if (!ctx->Attr<bool>("is_train")) {
       BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(
           parallel_id, parallel_num,
@@ -301,6 +364,9 @@ REGISTER_USER_KERNEL("embedding_shuffle")
     .SetIsMatchedHob((user_op::HobDeviceType() == DeviceType::kCUDA)
                      && (user_op::HobDataType("cur_rank_embeddings", 0) == DataType::kFloat16)
                      && (user_op::HobDataType("num_unique_matrix", 0) == DataType::kUInt32)
-                     && ParseBooleanFromEnv("EMBEDDING_SHUFFLE_USE_P2P_KERNEL", false));
-
+                     && ParseBooleanFromEnv("EMBEDDING_SHUFFLE_USE_P2P_KERNEL", false))
+    .SetInferTmpSizeFn([](user_op::InferContext* ctx) {
+      return GetCudaAlignedSize(ctx->InputTensorDesc("cur_rank_embeddings", 0).shape().elem_cnt()
+                                * sizeof(half));
+    });
 }  // namespace oneflow
