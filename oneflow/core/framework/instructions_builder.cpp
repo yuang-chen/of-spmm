@@ -39,7 +39,6 @@ limitations under the License.
 #include "oneflow/core/vm/barrier_instruction_type.h"
 #include "oneflow/core/vm/stream_wait_instruction_type.h"
 #include "oneflow/core/vm/virtual_machine.h"
-#include "oneflow/core/vm/vm_util.h"
 #include "oneflow/core/framework/global_tensor_infer_cache.h"
 #include "oneflow/core/eager/local_dep_object.h"
 #include "oneflow/core/eager/critical_section_instruction_type.h"
@@ -134,9 +133,9 @@ Maybe<void> InstructionsBuilder::MakeCriticalSectionEnd(
 // CriticalSectionBegin.
 // critical_section_callback is a non-blocking opkernel which notifies instruction
 // CriticalSectionEnd done.
-Maybe<void> InstructionsBuilder::LaunchLazyJob(const one::EagerBlobObjectListPtr& inputs,
-                                               const one::EagerBlobObjectListPtr& outputs,
-                                               const one::EagerBlobObjectListPtr& parameters,
+Maybe<void> InstructionsBuilder::LaunchLazyJob(const vm::EagerBlobObjectListPtr& inputs,
+                                               const vm::EagerBlobObjectListPtr& outputs,
+                                               const vm::EagerBlobObjectListPtr& parameters,
                                                const std::shared_ptr<NNGraphIf>& nn_graph) {
   JUST(SoftSyncNNGraphBuffers(inputs, nn_graph));
   JUST(SoftSyncNNGraphBuffers(outputs, nn_graph));
@@ -206,10 +205,10 @@ Maybe<void> InstructionsBuilder::LaunchLazyJob(const one::EagerBlobObjectListPtr
 }
 
 Maybe<void> InstructionsBuilder::SoftSyncNNGraphBuffers(
-    const one::EagerBlobObjectListPtr& eager_blob_objects,
+    const vm::EagerBlobObjectListPtr& eager_blob_objects,
     const std::shared_ptr<NNGraphIf>& nn_graph) {
   const auto& stream = JUST(GetCriticalSectionStream());
-  JUST(SoftSyncStream(eager_blob_objects, stream));
+  JUST(SoftSyncStream(*eager_blob_objects, stream));
   return Maybe<void>::Ok();
 }
 
@@ -363,31 +362,33 @@ Maybe<Scope> InstructionsBuilder::BuildScopeByProtoStrSetter(
 }
 
 Maybe<void> InstructionsBuilder::Call(const std::shared_ptr<one::StatefulOpKernel>& opkernel,
-                                      const one::EagerBlobObjectListPtr& input_eager_blob_objects,
-                                      const one::EagerBlobObjectListPtr& output_eager_blob_objects,
+                                      vm::EagerBlobObjectList&& input_eager_blob_objects,
+                                      vm::EagerBlobObjectList&& output_eager_blob_objects,
                                       const one::OpExprInterpContext& ctx, Symbol<Stream> stream) {
-  return Call(opkernel, input_eager_blob_objects, output_eager_blob_objects, nullptr, ctx, stream);
+  return Call(opkernel, std::move(input_eager_blob_objects), std::move(output_eager_blob_objects),
+              nullptr, ctx, stream);
 }
 
 Maybe<void> InstructionsBuilder::Call(
     const std::shared_ptr<one::StatefulOpKernel>& opkernel,
-    const one::EagerBlobObjectListPtr& input_eager_blob_objects,
-    const one::EagerBlobObjectListPtr& output_eager_blob_objects,
+    vm::EagerBlobObjectList&& input_eager_blob_objects,
+    vm::EagerBlobObjectList&& output_eager_blob_objects,
     const std::shared_ptr<const one::GlobalTensorInferResult>& global_tensor_infer_result,
     const one::OpExprInterpContext& ctx, Symbol<Stream> stream) {
   JUST(SoftSyncStream(output_eager_blob_objects, stream));
   JUST(SoftSyncStream(input_eager_blob_objects, stream));
-  auto* vm_stream = JUST(Singleton<VirtualMachine>::Get()->GetVmStream(stream));
-  auto phy_instr_operand = JUST(vm::OpCallPhyInstrOperand::New(
-      vm_stream, opkernel, input_eager_blob_objects, output_eager_blob_objects,
-      global_tensor_infer_result, ctx, *one::CurrentDevVmDepObjectConsumeMode()));
-  auto instruction = intrusive::make_shared<vm::Instruction>(
-      vm_stream, SingletonPtr<vm::OpCallInstructionType>(), phy_instr_operand);
-  instruction_list_->EmplaceBack(std::move(instruction));
-  for (const auto& output : *output_eager_blob_objects) {
+  for (const auto& output : output_eager_blob_objects) {
     if (!output->producer_stream().has_value()) { JUST(output->init_producer_stream(stream)); }
     output->set_last_used_stream(stream);
   }
+  auto* vm_stream = JUST(Singleton<VirtualMachine>::Get()->GetVmStream(stream));
+  auto phy_instr_operand = JUST(vm::OpCallPhyInstrOperand::New(
+      vm_stream, opkernel, std::move(input_eager_blob_objects),
+      std::move(output_eager_blob_objects), global_tensor_infer_result, ctx,
+      *one::CurrentDevVmDepObjectConsumeMode()));
+  auto instruction = intrusive::make_shared<vm::Instruction>(
+      vm_stream, SingletonPtr<vm::OpCallInstructionType>(), phy_instr_operand);
+  instruction_list_->EmplaceBack(std::move(instruction));
   return Maybe<void>::Ok();
 }
 
@@ -430,15 +431,15 @@ Maybe<void> InstructionsBuilder::ReleaseTensor(
 }
 
 Maybe<void> InstructionsBuilder::TouchTensors(
-    const one::EagerBlobObjectListPtr& eager_blob_objects) {
+    const vm::EagerBlobObjectListPtr& eager_blob_objects) {
   Symbol<Device> device = JUST(Device::New("cpu"));
   Symbol<Stream> stream = JUST(GetDefaultStreamByDevice(device));
   return TouchTensors(eager_blob_objects, stream);
 }
 
-Maybe<void> InstructionsBuilder::TouchTensors(const one::EagerBlobObjectListPtr& eager_blob_objects,
+Maybe<void> InstructionsBuilder::TouchTensors(const vm::EagerBlobObjectListPtr& eager_blob_objects,
                                               Symbol<Stream> stream) {
-  JUST(SoftSyncStream(eager_blob_objects, stream));
+  JUST(SoftSyncStream(*eager_blob_objects, stream));
   const auto& phy_instr_operand =
       std::make_shared<vm::TouchTensorsPhyInstrOperand>(*eager_blob_objects);
   auto instruction = intrusive::make_shared<vm::Instruction>(
@@ -448,27 +449,65 @@ Maybe<void> InstructionsBuilder::TouchTensors(const one::EagerBlobObjectListPtr&
   return Maybe<void>::Ok();
 }
 
-Maybe<void> InstructionsBuilder::SoftSyncStream(
-    const one::EagerBlobObjectListPtr& eager_blob_objects, Symbol<Stream> stream) {
-  SmallSet<Symbol<Stream>> last_used_streams;
-  for (const auto& eager_blob_object : *eager_blob_objects) {
-    const auto& opt_last_used_stream = eager_blob_object->last_used_stream();
-    if (unlikely(!opt_last_used_stream.has_value())) { continue; }
-    const auto& last_used_stream = JUST(opt_last_used_stream);
-    if (last_used_stream != stream) { SmallSetInsert(&last_used_streams, last_used_stream); }
-  }
-  for (const auto& last_used_stream : last_used_streams) {
-    std::vector<intrusive::shared_ptr<LocalDepObject>> dep_objects;
-    dep_objects.reserve(eager_blob_objects->size());
-    for (const auto& eager_blob_object : *eager_blob_objects) {
+namespace {
+
+template<typename DoEachT>
+Maybe<void> ForEachEagerBlobObjectsNeedingSoftSync(
+    const vm::EagerBlobObjectList& eager_blob_objects, Symbol<Stream> stream,
+    const DoEachT& DoEach) {
+  if (eager_blob_objects.size() <= kOpArgsReservedSize) {
+    for (const auto& eager_blob_object : eager_blob_objects) {
       const auto& opt_last_used_stream = eager_blob_object->last_used_stream();
       if (unlikely(!opt_last_used_stream.has_value())) { continue; }
-      if (JUST(opt_last_used_stream) == last_used_stream) {
-        dep_objects.emplace_back(JUST(eager_blob_object->compute_local_dep_object()));
+      const auto& last_used_stream = JUST(opt_last_used_stream);
+      if (last_used_stream != stream) {
+        const auto& ForEachEagerBlobObject = [&](const auto& DoEachEagerBlobObject) -> Maybe<void> {
+          return DoEachEagerBlobObject(eager_blob_object);
+        };
+        JUST(DoEach(last_used_stream, ForEachEagerBlobObject));
       }
-      eager_blob_object->set_last_used_stream(stream);
     }
-    JUST(SoftSyncStreamBetween(std::move(dep_objects), last_used_stream, stream));
+  } else {
+    SmallSet<Symbol<Stream>> last_used_streams;
+    for (const auto& eager_blob_object : eager_blob_objects) {
+      const auto& opt_last_used_stream = eager_blob_object->last_used_stream();
+      if (unlikely(!opt_last_used_stream.has_value())) { continue; }
+      const auto& last_used_stream = JUST(opt_last_used_stream);
+      if (last_used_stream != stream) { SmallSetInsert(&last_used_streams, last_used_stream); }
+    }
+    for (const auto& last_used_stream : last_used_streams) {
+      const auto& ForEachEagerBlobObject = [&](const auto& DoEachEagerBlobObject) -> Maybe<void> {
+        for (const auto& eager_blob_object : eager_blob_objects) {
+          const auto& opt_stream = eager_blob_object->last_used_stream();
+          if (unlikely(!opt_stream.has_value())) { continue; }
+          if (JUST(opt_stream) == last_used_stream) {
+            JUST(DoEachEagerBlobObject(eager_blob_object));
+          }
+        }
+        return Maybe<void>::Ok();
+      };
+      JUST(DoEach(last_used_stream, ForEachEagerBlobObject));
+    }
+  }
+  return Maybe<void>::Ok();
+}
+
+}  // namespace
+
+Maybe<void> InstructionsBuilder::SoftSyncStream(const vm::EagerBlobObjectList& eager_blob_objects,
+                                                Symbol<Stream> stream) {
+  JUST(ForEachEagerBlobObjectsNeedingSoftSync(
+      eager_blob_objects, stream,
+      [&](Symbol<Stream> last_used_stream, const auto& ForEachEagerBlobObject) -> Maybe<void> {
+        small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize> dep_objects{};
+        JUST(ForEachEagerBlobObject([&](const auto& eager_blob_object) -> Maybe<void> {
+          dep_objects.emplace_back(JUST(eager_blob_object->compute_local_dep_object()));
+          return Maybe<void>::Ok();
+        }));
+        return SoftSyncStreamBetween(std::move(dep_objects), last_used_stream, stream);
+      }));
+  for (const auto& eager_blob_object : eager_blob_objects) {
+    eager_blob_object->set_last_used_stream(stream);
   }
   return Maybe<void>::Ok();
 }
@@ -490,8 +529,8 @@ bool SupportingStreamWait(Symbol<Stream> from_stream, Symbol<Stream> to_stream) 
 }  // namespace
 
 Maybe<void> InstructionsBuilder::SoftSyncStreamBetween(
-    std::vector<intrusive::shared_ptr<LocalDepObject>>&& dependences, Symbol<Stream> from_stream,
-    Symbol<Stream> to_stream) {
+    small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&& dependences,
+    Symbol<Stream> from_stream, Symbol<Stream> to_stream) {
   CHECK(from_stream != to_stream) << "synchronization is unecessary";
   if (SupportingStreamWait(from_stream, to_stream)) {
     JUST(StreamWait(std::move(dependences), from_stream, to_stream));
@@ -502,8 +541,8 @@ Maybe<void> InstructionsBuilder::SoftSyncStreamBetween(
 }
 
 Maybe<void> InstructionsBuilder::StreamWait(
-    std::vector<intrusive::shared_ptr<LocalDepObject>>&& dependences, Symbol<Stream> from_stream,
-    Symbol<Stream> to_stream) {
+    small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&& dependences,
+    Symbol<Stream> from_stream, Symbol<Stream> to_stream) {
   auto* from_vm_stream = JUST(Singleton<VirtualMachine>::Get()->GetVmStream(from_stream));
   const auto& phy_instr_operand =
       std::make_shared<vm::StreamWaitPhyInstrOperand>(std::move(dependences), from_vm_stream);
@@ -515,7 +554,8 @@ Maybe<void> InstructionsBuilder::StreamWait(
 }
 
 Maybe<void> InstructionsBuilder::RecordEvent(
-    std::vector<intrusive::shared_ptr<LocalDepObject>>&& compute_local_dep_objects,
+    small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&&
+        compute_local_dep_objects,
     Symbol<Stream> last_used_stream) {
   DeviceType device_type = last_used_stream->device()->enum_type();
   if (!NeedSoftSync::Visit(last_used_stream->stream_role(), device_type)) {
@@ -657,14 +697,6 @@ Maybe<void> InstructionsBuilder::Barrier(const std::function<void()>& Callback) 
       JUST(Singleton<VirtualMachine>::Get()->GetVmStream(stream)),
       SingletonPtr<vm::BarrierInstructionType>(), phy_instr_operand);
   instruction_list_->PushBack(instruction.Mutable());
-  return Maybe<void>::Ok();
-}
-
-Maybe<void> PhysicalRun(const std::function<Maybe<void>(InstructionsBuilder*)>& Build) {
-  vm::InstructionList instruction_list;
-  InstructionsBuilder instructions_builder(&instruction_list);
-  JUST(Build(&instructions_builder));
-  JUST(vm::Run(instructions_builder.mut_instruction_list()));
   return Maybe<void>::Ok();
 }
 

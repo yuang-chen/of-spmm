@@ -21,6 +21,8 @@ limitations under the License.
 #include "oneflow/core/vm/phy_instr_operand.h"
 #include "oneflow/core/eager/local_dep_object.h"
 #include "oneflow/core/vm/instruction_type.h"
+#include "oneflow/core/common/op_args_reserved_size.h"
+#include "oneflow/core/common/small_vector.h"
 
 namespace oneflow {
 class EpEvent;
@@ -30,8 +32,9 @@ class Stream;
 
 class StreamWaitPhyInstrOperand : public PhyInstrOperand {
  public:
-  StreamWaitPhyInstrOperand(std::vector<intrusive::shared_ptr<LocalDepObject>>&& dependences,
-                            vm::Stream* from_vm_stream)
+  StreamWaitPhyInstrOperand(
+      small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&& dependences,
+      vm::Stream* from_vm_stream)
       : dependences_(std::move(dependences)),
         input_dependences_(),
         output_dependences_(),
@@ -53,7 +56,7 @@ class StreamWaitPhyInstrOperand : public PhyInstrOperand {
   std::shared_ptr<EpEvent>& mut_ep_event() { return ep_event_; }
 
  private:
-  std::vector<intrusive::shared_ptr<LocalDepObject>> dependences_;
+  small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize> dependences_;
   DependenceVector input_dependences_;
   DependenceVector output_dependences_;
   vm::Stream* from_vm_stream_;
