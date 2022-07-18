@@ -217,39 +217,38 @@ __global__ void MemsetCurRankEmbeddingGrad(int64_t parallel_id, int64_t parallel
 
 template<typename T, size_t pack>
 typename std::enable_if<(pack != 0), void>::type LaunchPackMemsetCurRankEmbeddingGrad(
-    cudaStream_t stream, const uint32_t* num_unique_matrix, T* ptr, size_t count,
+    cudaStream_t stream, const uint32_t* num_unique_matrix, T* ptr, int sm_count,
     int64_t vector_size, int64_t parallel_id, int64_t parallel_num) {
-  MemsetCurRankEmbeddingGrad<T, pack>
-      <<<BlocksNum4ThreadsNum(count / pack), kCudaThreadsNumPerBlock, 0, stream>>>(
-          parallel_id, parallel_num, vector_size, num_unique_matrix, ptr);
+  MemsetCurRankEmbeddingGrad<T, pack><<<2 * sm_count, 1024, 0, stream>>>(
+      parallel_id, parallel_num, vector_size, num_unique_matrix, ptr);
 }
 
 template<typename T, size_t pack>
 typename std::enable_if<(pack == 0), void>::type LaunchPackMemsetCurRankEmbeddingGrad(
-    cudaStream_t stream, const uint32_t* num_unique_matrix, T* ptr, size_t count,
+    cudaStream_t stream, const uint32_t* num_unique_matrix, T* ptr, int sm_count,
     int64_t vector_size, int64_t parallel_id, int64_t parallel_num) {
   LOG(FATAL) << "wrong alignment";
 }
 
 template<typename T>
-void LaunchMemsetCurRankEmbeddingGrad(cudaStream_t stream, size_t count, int64_t vector_size,
+void LaunchMemsetCurRankEmbeddingGrad(cudaStream_t stream, int sm_count, int64_t vector_size,
                                       int64_t parallel_id, int64_t parallel_num,
                                       const uint32_t* num_unique_matrix, T* ptr) {
   auto uintptr = reinterpret_cast<std::uintptr_t>(ptr);
   if (uintptr % 16 == 0) {
-    LaunchPackMemsetCurRankEmbeddingGrad<T, 16 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
-                                                            vector_size, parallel_id, parallel_num);
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 16 / sizeof(T)>(
+        stream, num_unique_matrix, ptr, sm_count, vector_size, parallel_id, parallel_num);
   } else if (uintptr % 8 == 0) {
-    LaunchPackMemsetCurRankEmbeddingGrad<T, 8 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 8 / sizeof(T)>(stream, num_unique_matrix, ptr, sm_count,
                                                            vector_size, parallel_id, parallel_num);
   } else if (uintptr % 4 == 0) {
-    LaunchPackMemsetCurRankEmbeddingGrad<T, 4 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 4 / sizeof(T)>(stream, num_unique_matrix, ptr, sm_count,
                                                            vector_size, parallel_id, parallel_num);
   } else if (uintptr % 2 == 0) {
-    LaunchPackMemsetCurRankEmbeddingGrad<T, 2 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 2 / sizeof(T)>(stream, num_unique_matrix, ptr, sm_count,
                                                            vector_size, parallel_id, parallel_num);
   } else {
-    LaunchPackMemsetCurRankEmbeddingGrad<T, 1 / sizeof(T)>(stream, num_unique_matrix, ptr, count,
+    LaunchPackMemsetCurRankEmbeddingGrad<T, 1 / sizeof(T)>(stream, num_unique_matrix, ptr, sm_count,
                                                            vector_size, parallel_id, parallel_num);
   }
 }
@@ -300,6 +299,8 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
     const bool only_zero_valid_grad = ctx->Attr<bool>("only_zero_valid_grad");
     const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
     const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
+    const int sm_count =
+        ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
     const bool skip_first_scatter = ctx->Attr<bool>("skip_first_scatter");
     CHECK(skip_first_scatter);
     cudaStream_t cuda_stream = ctx->stream()->As<ep::CudaStream>()->cuda_stream();
@@ -321,10 +322,10 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
     param.num_unique_matrix = reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr());
     int64_t embedding_num_pack = embedding_size / pack_size;
     if (only_zero_valid_grad) {
-      LaunchMemsetCurRankEmbeddingGrad(
-          cuda_stream, cur_rank_unique_embedding_grad->shape_view().elem_cnt(), embedding_size,
-          parallel_id, parallel_num, reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr()),
-          cur_rank_unique_embedding_grad->mut_dptr<T>());
+      LaunchMemsetCurRankEmbeddingGrad(cuda_stream, sm_count, embedding_size, parallel_id,
+                                       parallel_num,
+                                       reinterpret_cast<const uint32_t*>(num_unique_matrix->dptr()),
+                                       cur_rank_unique_embedding_grad->mut_dptr<T>());
     } else {
       OF_CUDA_CHECK(cudaMemsetAsync(
           cur_rank_unique_embedding_grad->mut_dptr(), 0,
