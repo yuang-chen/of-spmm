@@ -95,14 +95,12 @@ __global__ void EmbeddingGraidientShuffleCudaKernel(int64_t parallel_id, int64_t
 template<typename T, typename IDX, int pack_size, int N>
 __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
                               Param<T, IDX, pack_size, N> param) {
-  int count = *param.is_kernel_start[parallel_id];
-  volatile int32_t* start_f = param.is_kernel_start[parallel_id];
-  *start_f = count + 1;
-  // printf("\nparallel_id %d set to %d\n", parallel_id, *start_f);
-  for (int k = 0; k < parallel_num; ++k) {
-    volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
-    while (*is_kernel_start_ptr < count + 1)
-      ;
+  int count = param.is_kernel_start[parallel_id][parallel_id];
+  if (threadIdx.x < parallel_num) {
+    volatile int32_t* start_f = param.is_kernel_start[parallel_id];
+    volatile int32_t* remote_start_f = param.is_kernel_start[threadIdx.x];
+    start_f[threadIdx.x] = count + 1;
+    while (remote_start_f[parallel_id] < count + 1) {}
   }
 }
 
@@ -173,7 +171,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
     int64_t parallel_num = parallel_desc_.parallel_num();
     unique_partitioned_embedding_grad_ptr_.resize(parallel_num);
     is_kernel_start_ptr_.resize(parallel_num);
-    size_t is_kernel_start_size = GetCudaAlignedSize(sizeof(int32_t));
+    size_t is_kernel_start_size = GetCudaAlignedSize(parallel_num * sizeof(int32_t));
     OF_CUDA_CHECK(cudaMalloc(&is_kernel_start_ptr_.at(parallel_id_), is_kernel_start_size));
     OF_CUDA_CHECK(cudaMemset(is_kernel_start_ptr_.at(parallel_id_), 0, is_kernel_start_size));
   }
@@ -332,10 +330,10 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
           cur_rank_unique_embedding_grad->mut_dptr(), 0,
           cur_rank_unique_embedding_grad->shape_view().elem_cnt() * sizeof(T), cuda_stream));
     }
-    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     EmbeddingGraidientShuffleCudaKernel<<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
-    // BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    // BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     current_iter_++;
   }
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }

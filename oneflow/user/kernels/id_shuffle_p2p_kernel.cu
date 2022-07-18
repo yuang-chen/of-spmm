@@ -97,7 +97,6 @@ struct Param {
   K* unique_ids[N];
   U* unique_table_ids[N];
   int32_t* is_kernel_start[N];
-  int32_t* kernel_start_counter[N];
   IDX* num_unique_matrix;
   int32_t* counter;
 };
@@ -105,57 +104,14 @@ struct Param {
 template<typename K, typename V, typename IDX, int N>
 __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
                               Param<K, V, IDX, N> param) {
-  int count = *param.is_kernel_start[parallel_id];
-  volatile int32_t* start_f = param.is_kernel_start[parallel_id];
-  *start_f = count + 1;
-  // printf("\nparallel_id %d set to %d\n", parallel_id, *start_f);
-  for (int k = 0; k < parallel_num; ++k) {
-    volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
-    while (*is_kernel_start_ptr < count + 1)
-      ;
+  int count = param.is_kernel_start[parallel_id][parallel_id];
+  if (threadIdx.x < parallel_num) {
+    volatile int32_t* start_f = param.is_kernel_start[parallel_id];
+    volatile int32_t* remote_start_f = param.is_kernel_start[threadIdx.x];
+    start_f[threadIdx.x] = count + 1;
+    while (remote_start_f[parallel_id] < count + 1) {}
   }
 }
-
-template<typename K, typename V, typename IDX, int N>
-__global__ void EndBarrierKernel(int32_t parallel_id, int32_t parallel_num,
-                                 Param<K, V, IDX, N> param) {
-  int count = *param.kernel_start_counter[parallel_id];
-  volatile int32_t* start_f = param.kernel_start_counter[parallel_id];
-  *start_f = count + 1;
-  // printf("\nparallel_id %d set to %d\n", parallel_id, *start_f);
-  for (int k = 0; k < parallel_num; ++k) {
-    volatile int32_t* is_kernel_start_ptr = param.kernel_start_counter[k];
-    while (*is_kernel_start_ptr < count + 1)
-      ;
-  }
-}
-
-// template<typename K, typename V, typename IDX, int N>
-//__global__ void EndBarrierKernel(int32_t parallel_id, int32_t parallel_num,
-//                              Param<K, V, IDX, N> param) {
-//  volatile int32_t* start_f = param.is_kernel_start[parallel_id];
-//  *start_f = 0;
-//  for (int k = 0; k < parallel_num; ++k) {
-//    volatile int32_t* is_kernel_start_ptr = param.is_kernel_start[k];
-//    while (*is_kernel_start_ptr == 1)
-//      ;
-//  }
-//}
-// template<typename K, typename V, typename IDX, int N>
-//__global__ void EndBarrierKernel(int32_t parallel_id, int32_t parallel_num,
-//                                 Param<K, V, IDX, N> param) {
-//  for (int k = 0; k < parallel_num; ++k) {
-//    if (k != parallel_id) {
-//      int old_val = atomicAdd(param.is_kernel_start[k], 1);
-//      // printf("\nparallel_id %d k %d old val %d\n", parallel_id, k, old_val);
-//    }
-//  }
-//  volatile int32_t* start_f = param.is_kernel_start[parallel_id];
-//  while (*start_f < parallel_num)
-//    ;
-//  printf("\nset parallel_id %d to 0\n", parallel_id);
-//  *start_f = 0;
-//}
 
 template<typename K, typename V, typename IDX, typename HASH, int N>
 __global__ void HashTableUniquePairs(const uint32_t table_capacity, const uint32_t num_ids,
@@ -163,22 +119,9 @@ __global__ void HashTableUniquePairs(const uint32_t table_capacity, const uint32
                                      TableEntry<K>* table, Param<K, V, IDX, N> param,
                                      K* unique_keys, V* unique_values, IDX* reverse_index,
                                      bool need_process_values) {
-  //__shared__ int count;
-  // if (threadIdx.x == 0) {
-  //  int old_val = atomicAdd(param.counter, 1);
-  //  count = old_val / gridDim.x;
-  //  if (old_val % gridDim.x == 0) {
-  //    volatile int32_t* start_f = param.kernel_start_counter[parallel_id];
-  //    *start_f = count + 1;
-  //  }
-  //}
-  //__syncthreads();
-  //__threadfence_system();
 #pragma unroll 1
   for (int i = 0; i < parallel_num; ++i) {
     int rank_id = (parallel_id + i) % parallel_num;
-    // volatile int32_t* is_kernel_start_ptr = param.kernel_start_counter[rank_id];
-    // while (*is_kernel_start_ptr < count + 1);
     const IDX* num_uniques = param.num_unique[rank_id];
     CUDA_1D_KERNEL_LOOP_T(int, rank_index, num_uniques[parallel_id]) {
       const IDX* num_uniques = param.num_unique[rank_id];
@@ -339,12 +282,9 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
     num_partitioned_unique_size_ = GetCudaAlignedSize(parallel_num * sizeof(IDX));
     partitioned_unique_ids_size_ = GetCudaAlignedSize(parallel_num * num_ids * sizeof(K));
     partitioned_unique_table_ids_size_ = GetCudaAlignedSize(parallel_num * num_ids * sizeof(U));
-    is_kernel_start_size_ = GetCudaAlignedSize(sizeof(int32_t));
-    kernel_start_counter_size_ = GetCudaAlignedSize(sizeof(int32_t));
-    size_t counter_size = GetCudaAlignedSize(sizeof(int32_t));
+    is_kernel_start_size_ = GetCudaAlignedSize(parallel_num * sizeof(int32_t));
     size_t buffer_size = num_partitioned_unique_size_ + partitioned_unique_ids_size_
-                         + partitioned_unique_table_ids_size_ + is_kernel_start_size_
-                         + kernel_start_counter_size_ + counter_size;
+                         + partitioned_unique_table_ids_size_ + is_kernel_start_size_;
     buffer_ptrs_.resize(parallel_num);
     cudaMalloc(&buffer_ptrs_.at(parallel_id), buffer_size);
     cudaMemset(buffer_ptrs_.at(parallel_id), 0, buffer_size);
@@ -396,19 +336,6 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
                                       + partitioned_unique_table_ids_size_);
   }
 
-  int32_t* KernelStartCounter(int64_t parallel_id) {
-    return reinterpret_cast<int32_t*>(reinterpret_cast<char*>(buffer_ptrs_.at(parallel_id))
-                                      + num_partitioned_unique_size_ + partitioned_unique_ids_size_
-                                      + partitioned_unique_table_ids_size_ + is_kernel_start_size_);
-  }
-
-  int32_t* CounterPtr(int64_t parallel_id) {
-    return reinterpret_cast<int32_t*>(reinterpret_cast<char*>(buffer_ptrs_.at(parallel_id))
-                                      + num_partitioned_unique_size_ + partitioned_unique_ids_size_
-                                      + partitioned_unique_table_ids_size_ + is_kernel_start_size_
-                                      + kernel_start_counter_size_);
-  }
-
  private:
   int device_index_;
   bool has_independent_stream_;
@@ -421,7 +348,6 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   size_t partitioned_unique_ids_size_;
   size_t partitioned_unique_table_ids_size_;
   size_t is_kernel_start_size_;
-  size_t kernel_start_counter_size_;
   embedding::EmbeddingState* embedding_state_;
 };
 
@@ -514,7 +440,6 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
       param.unique_table_ids[i] =
           kernel_state->PartitionedUniqueTableIds(i) + parallel_id * num_ids;
       param.is_kernel_start[i] = kernel_state->IsKernelStart(i);
-      param.kernel_start_counter[i] = kernel_state->KernelStartCounter(i);
     }
     UniqueAndPartition<K, U, IDX, embedding::ShardingHash>(
         cuda_stream, num_ids, hash_table_capacity, parallel_num,
@@ -528,14 +453,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
     OF_CUDA_CHECK(cudaMemsetAsync(cur_rank_num_unique_ids_ptr, 0, sizeof(IDX), cuda_stream));
 
     param.num_unique_matrix = num_unique_matrix_ptr;
-    param.counter = kernel_state->CounterPtr(parallel_id);
-    // OF_CUDA_CHECK(
-    //    cudaMemsetAsync(kernel_state->IsKernelStart(parallel_id), 1, sizeof(int32_t),
-    //    cuda_stream));
-
-    // CHECK_JUST(ctx->stream()->Sync());
-    // OF_ENV_BARRIER();
-    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     HashTableUniquePairs<K, U, IDX, embedding::LocalUniqueHash>
         <<<216, kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
             hash_table_capacity, num_ids, parallel_num, parallel_id, cur_rank_num_unique_ids_ptr,
@@ -543,7 +461,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
             reinterpret_cast<K*>(cur_rank_unique_ids->mut_dptr()),
             reinterpret_cast<U*>(cur_rank_unique_table_ids->mut_dptr()),
             reinterpret_cast<IDX*>(cur_rank_inverse_indices->mut_dptr()), need_process_table_ids);
-    BarrierKernel<<<1, 1, 0, cuda_stream>>>(parallel_id, parallel_num, param);
+    BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     if (parallel_num > 1) {
       // use num_partitioned_unique as indices_offset buffer, so should after ncclAllGather.
       ComputeOffset<<<1, 1, 0, cuda_stream>>>(parallel_num, num_partitioned_unique);
