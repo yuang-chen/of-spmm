@@ -34,7 +34,7 @@ else()
   set(NCCL_INCLUDE_DIR ${NCCL_INSTALL_DIR}/include)
   set(NCCL_LIBRARY_DIR ${NCCL_INSTALL_DIR}/lib)
 
-  set(NCCL_URL https://github.com/NVIDIA/nccl/archive/refs/tags/v2.12.10-1.tar.gz)
+  set(NCCL_URL https://github.com/NVIDIA/nccl/archive/19ab67d1727d337d10d0a48cbaf5cd119b8d88f1.zip)
   use_mirror(VARIABLE NCCL_URL URL ${NCCL_URL})
 
   list(APPEND NCCL_LIBRARIES ${NCCL_LIBRARY_DIR}/${NCCL_LIBRARY_NAME})
@@ -47,7 +47,7 @@ else()
       nccl
       PREFIX nccl
       URL ${NCCL_URL}
-      URL_MD5 bdb91f80b78c99831f09ca8bb28a1032
+      URL_MD5 b16c00daecae2590ce1871386a95d465
       UPDATE_COMMAND ""
       CONFIGURE_COMMAND ""
       BUILD_IN_SOURCE 1
