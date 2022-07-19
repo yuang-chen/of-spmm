@@ -69,6 +69,7 @@ Maybe<EagerLocalTensorImpl*> TensorImpl4Tensor(const std::shared_ptr<Tensor>& te
 Maybe<void> NaiveInterpret(const UserOpExpr& user_op_expr, const TensorTuple& inputs,
                            TensorTuple* outputs, const OpExprInterpContext& ctx) {
   OF_PROFILER_RANGE_GUARD("NaiveInterpret");
+<<<<<<< HEAD
   CHECK_EQ_OR_RETURN(outputs->size(), user_op_expr.output_size());
   Symbol<Device> default_device = JUST(GetDefaultDevice(inputs, ctx));
   std::shared_ptr<const LocalTensorInferResult> result;
@@ -88,6 +89,72 @@ Maybe<void> NaiveInterpret(const UserOpExpr& user_op_expr, const TensorTuple& in
 
   for (int i = 0; i < outputs->size(); i++) {
     if (!outputs->at(i)) {
+=======
+  OF_PROFILER_RANGE_PUSH("init inputs");
+  const auto& attrs = ctx.attrs;
+  vm::EagerBlobObjectList input_eager_blob_objects(inputs.size());
+  for (int i = 0; i < inputs.size(); i++) {
+    const auto& input_device = JUST(inputs.at(i)->device());
+    if (i > 0) {
+      CHECK_OR_RETURN(default_device == input_device)
+          << Error::RuntimeError()
+          << "Expected all tensors to be on the same device, but found at least two devices, "
+          << default_device->ToString() << " (positional 0) and " << input_device->ToString()
+          << " (positional " << i << ")!";
+    }
+    input_eager_blob_objects.at(i) = JUST(inputs.at(i)->eager_blob_object());
+  }
+  OF_PROFILER_RANGE_POP();
+  OF_PROFILER_RANGE_PUSH("init outputs");
+  vm::EagerBlobObjectList output_eager_blob_objects(outputs->size());
+  auto* output_tensor_metas = ThreadLocalDefaultOutputMutTensorMetas(outputs->size());
+  for (int i = 0; i < outputs->size(); i++) {
+    if (!outputs->at(i)) {
+      const auto& tensor_impl = std::make_shared<EagerLocalTensorImpl>();
+      (*outputs)[i] = std::make_shared<LocalTensor>(tensor_impl);
+      output_tensor_metas->at(i) = tensor_impl->mut_tensor_meta();
+    } else {
+      bool has_eager_blob_object = JUST(outputs->at(i)->has_eager_blob_object());
+      CHECK_OR_RETURN(has_eager_blob_object);
+      output_eager_blob_objects.at(i) = JUST(outputs->at(i)->eager_blob_object());
+    }
+  }
+  Symbol<Stream> stream;
+
+  OF_PROFILER_RANGE_POP();
+  OF_PROFILER_RANGE_PUSH("infer devices");
+  // Infer devices
+  if (!user_op_expr.has_device_and_stream_infer_fn()) {
+    stream = JUST(GetDefaultStreamByDevice(default_device));
+    for (int i = 0; i < outputs->size(); i++) {
+      auto* tensor_impl = JUST(TensorImpl4Tensor(outputs->at(i)));
+      *JUST(tensor_impl->mut_device()) = default_device;
+    }
+  } else {
+    stream = JUST(user_op_expr.InferDeviceAndStream(attrs, inputs, outputs));
+  }
+
+  OF_PROFILER_RANGE_POP();
+  OF_PROFILER_RANGE_PUSH("infer shapes and dtypes");
+  // Infer shapes and dtypes
+  const auto& device_tag = stream->device()->type();
+  JUST(user_op_expr.InferPhysicalTensorDesc(
+      attrs, device_tag,
+      [&](int32_t i) -> const TensorMeta* {
+        return CHECK_JUST(TensorImpl4Tensor(inputs[i]))->mut_tensor_meta();
+      },
+      [&](int32_t i) -> TensorMeta* {
+        // using thread_local TensorMeta pointer if inplace.
+        // using tensor_impl TensorMeta pointer if not inplace.
+        return output_tensor_metas->at(i);
+      }));
+
+  OF_PROFILER_RANGE_POP();
+  OF_PROFILER_RANGE_PUSH("init output eager_blob_objects");
+  for (int i = 0; i < output_eager_blob_objects.size(); i++) {
+    auto* tensor_impl = JUST(TensorImpl4Tensor(outputs->at(i)));
+    if (!output_eager_blob_objects.at(i)) {
+>>>>>>> stream_wait
       // NOTE: if op support stride(non-contiguous input), then output tensor's stride
       // should be inferred in InferLogicalTensorDesc.
       // otherwise, it will be set here(according to shape).
@@ -102,7 +169,10 @@ Maybe<void> NaiveInterpret(const UserOpExpr& user_op_expr, const TensorTuple& in
       const auto& dep_object = NewLocalDepObject();
       JUST(tensor_impl->InitEagerBlobObject(dep_object));
       output_eager_blob_objects.at(i) = JUST(tensor_impl->eager_blob_object());
+<<<<<<< HEAD
       (*outputs)[i] = std::make_shared<LocalTensor>(tensor_impl);
+=======
+>>>>>>> stream_wait
     } else {
       auto* tensor_impl = JUST(TensorImpl4Tensor(outputs->at(i)));
       // output i is inplaced.
@@ -118,11 +188,22 @@ Maybe<void> NaiveInterpret(const UserOpExpr& user_op_expr, const TensorTuple& in
     }
   }
 
+<<<<<<< HEAD
   const auto& kernel = JUST(user_op_expr.MutKernel4Stream(result->stream()));
 
   JUST(PhysicalRun([&](InstructionsBuilder* builder) -> Maybe<void> {
     return builder->Call(kernel, std::move(input_eager_blob_objects),
                          std::move(output_eager_blob_objects), ctx, result->stream());
+=======
+  OF_PROFILER_RANGE_POP();
+  OF_PROFILER_RANGE_PUSH("init opkernel");
+  const auto& kernel = JUST(user_op_expr.MutKernel4Stream(stream));
+  OF_PROFILER_RANGE_POP();
+  OF_PROFILER_RANGE_PUSH("PhysicalRun");
+  JUST(PhysicalRun([&](InstructionsBuilder* builder) -> Maybe<void> {
+    return builder->Call(kernel, std::move(input_eager_blob_objects),
+                         std::move(output_eager_blob_objects), ctx, stream);
+>>>>>>> stream_wait
   }));
   for (int64_t index : kernel->output_tuple_indexes4mut2_obns()) {
     const auto* tensor_impl = JUST(TensorImpl4Tensor(outputs->at(index)));
@@ -132,6 +213,22 @@ Maybe<void> NaiveInterpret(const UserOpExpr& user_op_expr, const TensorTuple& in
           tensor_impl, btb, [](uint64_t) {}, "const");
     }));
     JUST(btb->WaitUntilCntEqualZero(VirtualMachine::GetPredicatorNoMoreInstructionsFinished()));
+<<<<<<< HEAD
+=======
+  }
+  OF_PROFILER_RANGE_POP();
+  return Maybe<void>::Ok();
+}
+
+static Maybe<void> NaiveInterpret(const UserOpExpr& user_op_expr, const TensorTuple& inputs,
+                                  TensorTuple* outputs, const OpExprInterpContext& ctx) {
+  CHECK_EQ_OR_RETURN(outputs->size(), user_op_expr.output_size());
+  Symbol<Device> default_device;
+  if (inputs.empty()) {
+    default_device = JUST(GetDefaultDevice(ctx));
+  } else {
+    default_device = JUST(inputs.at(0)->device());
+>>>>>>> stream_wait
   }
 
   return Maybe<void>::Ok();

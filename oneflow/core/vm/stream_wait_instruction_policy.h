@@ -14,13 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#ifndef ONEFLOW_CORE_VM_STREAM_WAIT_INSTRUCTION_TYPE_H_
-#define ONEFLOW_CORE_VM_STREAM_WAIT_INSTRUCTION_TYPE_H_
+#ifndef ONEFLOW_CORE_VM_STREAM_WAIT_INSTRUCTION_POLICY_H_
+#define ONEFLOW_CORE_VM_STREAM_WAIT_INSTRUCTION_POLICY_H_
 
 #include <functional>
 #include "oneflow/core/vm/phy_instr_operand.h"
 #include "oneflow/core/eager/local_dep_object.h"
-#include "oneflow/core/vm/instruction_type.h"
+#include "oneflow/core/vm/instruction_policy.h"
 #include "oneflow/core/common/op_args_reserved_size.h"
 #include "oneflow/core/common/small_vector.h"
 
@@ -30,32 +30,32 @@ namespace vm {
 
 class Stream;
 
-class StreamWaitPhyInstrOperand : public PhyInstrOperand {
+class StreamWaitInstructionPolicy final : public vm::InstructionPolicy {
  public:
-  StreamWaitPhyInstrOperand(
+  StreamWaitInstructionPolicy(
       small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&& dependences,
-      vm::Stream* from_vm_stream)
-      : dependences_(std::move(dependences)),
-        input_dependences_(),
-        output_dependences_(),
-        from_vm_stream_(from_vm_stream) {
-    const auto& Insert = SetInserter(&output_dependences_);
-    for (const auto& dep : dependences) { Insert(dep.get()); }
-    stream_sequential_dependence_ = nullptr;
-  }
+      vm::Stream* from_vm_stream);
+  ~StreamWaitInstructionPolicy() = default;
 
-  ~StreamWaitPhyInstrOperand() = default;
+  Dependence* stream_sequential_dependence() const override { return nullptr; }
+
+  std::string DebugName(const vm::Instruction&) const override { return "StreamWait"; }
+
+  bool Prescheduleable(const Stream* src, const Stream* dst) const override;
+  void InitInstructionStatus(Instruction* instruction) override;
+  void DeleteInstructionStatus(Instruction* instruction) override;
+  Maybe<void> Prepare(vm::Instruction* instruction) override { return Maybe<void>::Ok(); }
+  void Compute(vm::Instruction* instruction) override;
 
   const DependenceVector& input_dependences() const override { return input_dependences_; }
   const DependenceVector& output_dependences() const override { return output_dependences_; }
 
   void ForEachInputEagerBlobObjects(void (*DoEach)(EagerBlobObject*)) const override {}
 
+ private:
   vm::Stream* mut_from_vm_stream() { return from_vm_stream_; }
-
   std::shared_ptr<EpEvent>& mut_ep_event() { return ep_event_; }
 
- private:
   small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize> dependences_;
   DependenceVector input_dependences_;
   DependenceVector output_dependences_;
@@ -63,20 +63,7 @@ class StreamWaitPhyInstrOperand : public PhyInstrOperand {
   std::shared_ptr<EpEvent> ep_event_;
 };
 
-class StreamWaitInstructionType final : public vm::InstructionType {
- public:
-  StreamWaitInstructionType() = default;
-
-  std::string DebugName(const vm::Instruction&) const override { return "StreamWait"; }
-
-  bool Prescheduleable(const Stream* src, const Stream* dst) const override;
-  void InitInstructionStatus(Instruction* instruction) const override;
-  void DeleteInstructionStatus(Instruction* instruction) const override;
-  Maybe<void> Prepare(vm::Instruction* instruction) const override { return Maybe<void>::Ok(); }
-  void Compute(vm::Instruction* instruction) const override;
-};
-
 }  // namespace vm
 }  // namespace oneflow
 
-#endif  // ONEFLOW_CORE_VM_STREAM_WAIT_INSTRUCTION_TYPE_H_
+#endif  // ONEFLOW_CORE_VM_STREAM_WAIT_INSTRUCTION_POLICY_H_
