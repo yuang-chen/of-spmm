@@ -113,6 +113,36 @@ __global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
   }
 }
 
+template<typename T, int pack_size>
+struct alignas(sizeof(T) * pack_size) Pack {
+  T elem[pack_size];
+};
+
+template<typename K, typename V, typename IDX, int N, int pack_size>
+__global__ void BarrierAndMemset(int32_t parallel_id, int32_t parallel_num,
+                                 Param<K, V, IDX, N> param, Pack<char, pack_size>* workspace_ptr,
+                                 size_t workspace_num_pack, IDX* counter, int num_counter) {
+  int count;
+  if (blockIdx.x == 0) {
+    count = param.is_kernel_start[parallel_id][parallel_id];
+    if (threadIdx.x < parallel_num) {
+      volatile int32_t* start_f = param.is_kernel_start[parallel_id];
+      start_f[threadIdx.x] = count + 1;
+    }
+  }
+  Pack<char, pack_size> pack_value;
+  for (int i = 0; i < pack_size; ++i) { pack_value.elem[i] = static_cast<char>(0); }
+  CUDA_1D_KERNEL_LOOP(i, workspace_num_pack) { workspace_ptr[i] = pack_value; }
+  int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (global_thread_id < num_counter) { counter[global_thread_id] = 0; }
+  if (blockIdx.x == 0) {
+    if (threadIdx.x < parallel_num) {
+      volatile int32_t* remote_start_f = param.is_kernel_start[threadIdx.x];
+      while (remote_start_f[parallel_id] < count + 1) {}
+    }
+  }
+}
+
 template<typename K, typename V, typename IDX, typename HASH, int N>
 __global__ void HashTableUniquePairs(const uint32_t table_capacity, const uint32_t num_ids,
                                      int32_t parallel_num, int32_t parallel_id, IDX* unique_count,
@@ -180,24 +210,34 @@ __global__ void GenerateTableIds(int32_t elem_cnt, int32_t num_tables, U* table_
   CUDA_1D_KERNEL_LOOP(i, elem_cnt) { table_ids[i] = i % num_tables; }
 }
 
+template<typename U, typename IDX, int pack_size>
+__global__ void GenerateTableIdsAndMemsetUniqueWorkspace(int32_t elem_cnt, int32_t num_tables,
+                                                         U* table_ids,
+                                                         Pack<char, pack_size>* workspace_ptr,
+                                                         size_t workspace_num_pack, IDX* counter,
+                                                         int num_counter) {
+  CUDA_1D_KERNEL_LOOP(i, elem_cnt) { table_ids[i] = i % num_tables; }
+  Pack<char, pack_size> pack_value;
+  for (int i = 0; i < pack_size; ++i) { pack_value.elem[i] = static_cast<char>(0); }
+  CUDA_1D_KERNEL_LOOP(i, workspace_num_pack) { workspace_ptr[i] = pack_value; }
+  int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (global_thread_id < num_counter) { counter[global_thread_id] = 0; }
+}
+
 template<typename K, typename V, typename IDX, typename HASH>
-void UniqueAndPartition(cudaStream_t cuda_stream, int64_t num_ids, size_t capacity,
-                        int64_t num_partition, const K* ids, const V* table_ids,
+void UniqueAndPartition(cudaStream_t cuda_stream, int64_t num_blocks, int64_t num_ids,
+                        size_t capacity, int64_t num_partition, const K* ids, const V* table_ids,
                         IDX* num_partitioned_unique_ids_ptr, K* partitioned_unique_ids,
                         V* partitioned_unique_table_ids, IDX* inverse_unique_partition_indices,
                         void* workspace_ptr, size_t workspace_bytes, bool need_process_table_ids,
                         int32_t* is_kernel_start_ptr) {
   size_t table_capacity_bytes = capacity * sizeof(TableEntry<K>);
   CHECK_GE(workspace_bytes, table_capacity_bytes);
-  OF_CUDA_CHECK(cudaMemsetAsync(workspace_ptr, 0, table_capacity_bytes, cuda_stream));
-  OF_CUDA_CHECK(
-      cudaMemsetAsync(num_partitioned_unique_ids_ptr, 0, num_partition * sizeof(IDX), cuda_stream));
-  HashTableUniqueAndPartitionPairs<K, V, IDX, HASH>
-      <<<BlocksNum4ThreadsNum(num_ids), kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
-          capacity, num_ids, num_partition, num_partitioned_unique_ids_ptr,
-          reinterpret_cast<TableEntry<K>*>(workspace_ptr), ids, table_ids, partitioned_unique_ids,
-          partitioned_unique_table_ids, inverse_unique_partition_indices, need_process_table_ids,
-          is_kernel_start_ptr);
+  HashTableUniqueAndPartitionPairs<K, V, IDX, HASH><<<num_blocks, 1024, 0, cuda_stream>>>(
+      capacity, num_ids, num_partition, num_partitioned_unique_ids_ptr,
+      reinterpret_cast<TableEntry<K>*>(workspace_ptr), ids, table_ids, partitioned_unique_ids,
+      partitioned_unique_table_ids, inverse_unique_partition_indices, need_process_table_ids,
+      is_kernel_start_ptr);
 }
 
 enum class IdShuffleBufferType {
@@ -274,6 +314,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
     int64_t parallel_num = parallel_desc_.parallel_num();
     OF_CUDA_CHECK(
         cudaMallocHost(&host_num_unique_matrix_, parallel_num * parallel_num * sizeof(IDX)));
+    OF_CUDA_CHECK(cudaMallocHost(&host_cur_rank_num_unique_, sizeof(IDX)));
     const std::string& embedding_name = ctx->Attr<std::string>("embedding_name");
     const int64_t parallel_id = parallel_id_;
     embedding_state_ = Singleton<embedding::EmbeddingManager>::Get()->GetEmbeddingState(
@@ -308,11 +349,14 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   }
   ~DataShuffleKernelState() {
     CudaCurrentDeviceGuard guard(device_index_);
+    OF_CUDA_CHECK(cudaFreeHost(host_cur_rank_num_unique_));
     OF_CUDA_CHECK(cudaFreeHost(host_num_unique_matrix_));
     OF_CUDA_CHECK(cudaFree(buffer_ptrs_.at(parallel_id_)));
   }
 
   IDX* HostNumUniqueMatrix() { return host_num_unique_matrix_; }
+
+  IDX* HostCurRankNumUnique() { return host_cur_rank_num_unique_; }
 
   embedding::EmbeddingState* EmbeddingState() { return embedding_state_; }
 
@@ -343,6 +387,7 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   ParallelDesc parallel_desc_;
   int64_t parallel_id_;
   IDX* host_num_unique_matrix_;
+  IDX* host_cur_rank_num_unique_;
   std::vector<void*> buffer_ptrs_;
   size_t num_partitioned_unique_size_;
   size_t partitioned_unique_ids_size_;
@@ -372,6 +417,46 @@ __global__ void ContiguousInverseUniquePartitionIndices(const int32_t num_ids, I
     inverse_ptr[i] = new_offset + partition_indice;
   }
 }
+
+template<typename K, typename V, typename IDX, int N>
+__global__ void BarrierAndComputeOut(int32_t parallel_id, int32_t parallel_num, int32_t num_ids,
+                                     Param<K, V, IDX, N> param, IDX* num_partitioned_unique,
+                                     IDX* inverse_ptr, IDX* num_unique_matrix,
+                                     IDX* host_num_unique_matrix, IDX* cur_rank_num_unique,
+                                     IDX* host_cur_rank_num_unique) {
+  int count;
+  if (blockIdx.x == 0) {
+    count = param.is_kernel_start[parallel_id][parallel_id];
+    if (threadIdx.x < parallel_num) {
+      volatile int32_t* start_f = param.is_kernel_start[parallel_id];
+      start_f[threadIdx.x] = count + 1;
+    }
+  }
+  if (parallel_num > 1) {
+    CUDA_1D_KERNEL_LOOP(i, num_ids) {
+      int inverse_indice = inverse_ptr[i];
+      int partition_id = inverse_indice / num_ids;
+      int partition_indice = inverse_indice - partition_id * num_ids;
+      int new_offset = 0;
+      for (int k = 0; k < partition_id; ++k) { new_offset += num_partitioned_unique[k]; }
+      inverse_ptr[i] = new_offset + partition_indice;
+    }
+  }
+  int global_thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (global_thread_id < parallel_num * parallel_num) {
+    host_num_unique_matrix[global_thread_id] = num_unique_matrix[global_thread_id];
+  }
+  if (global_thread_id == 0) {
+    host_cur_rank_num_unique[global_thread_id] = cur_rank_num_unique[global_thread_id];
+  }
+  if (blockIdx.x == 0) {
+    if (threadIdx.x < parallel_num) {
+      volatile int32_t* remote_start_f = param.is_kernel_start[threadIdx.x];
+      while (remote_start_f[parallel_id] < count + 1) {}
+    }
+  }
+}
+
 }  // namespace
 
 template<typename K, typename U, typename IDX>
@@ -414,17 +499,8 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
         tmp_buffer->mut_dptr(), num_ids, parallel_num, need_gen_table_ids, need_process_table_ids);
     CHECK_GE(tmp_buffer->shape_view().elem_cnt(), buffer_manager.TotalBufferSize());
 
-    const U* table_ids_ptr;
-    if (has_table_ids) {
-      const user_op::Tensor* table_ids = ctx->Tensor4ArgNameAndIndex("table_ids", 0);
-      table_ids_ptr = reinterpret_cast<const U*>(table_ids->dptr());
-    } else if (need_gen_table_ids) {
-      GenerateTableIds<<<BlocksNum4ThreadsNum(num_ids), kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
-          num_ids, num_tables, buffer_manager.template Ptr<U>(IdShuffleBufferType::kTableIds));
-      table_ids_ptr = buffer_manager.template Ptr<U>(IdShuffleBufferType::kTableIds);
-    } else {
-      table_ids_ptr = nullptr;
-    }
+    const int num_blocks =
+        2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
     IDX* num_partitioned_unique = kernel_state->NumPartitionedUnique(parallel_id);
     K* partitioned_unique_ids = kernel_state->PartitionedUniqueIds(parallel_id);
     U* partitioned_unique_table_ids = kernel_state->PartitionedUniqueTableIds(parallel_id);
@@ -432,6 +508,36 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
     size_t hash_table_capacity = parallel_num * num_ids;
     void* workspace_ptr = buffer_manager.Ptr(IdShuffleBufferType::kWorkspace);
     size_t workspace_size = buffer_manager.Size(IdShuffleBufferType::kWorkspace);
+    const U* table_ids_ptr;
+    bool skip_memset = false;
+    if (has_table_ids) {
+      const user_op::Tensor* table_ids = ctx->Tensor4ArgNameAndIndex("table_ids", 0);
+      table_ids_ptr = reinterpret_cast<const U*>(table_ids->dptr());
+    } else if (need_gen_table_ids) {
+      CHECK_EQ(workspace_size % 16, 0);
+      CHECK_EQ(reinterpret_cast<std::uintptr_t>(workspace_ptr) % 16, 0);
+      GenerateTableIdsAndMemsetUniqueWorkspace<U, IDX, 16><<<num_blocks, 1024, 0, cuda_stream>>>(
+          num_ids, num_tables, buffer_manager.template Ptr<U>(IdShuffleBufferType::kTableIds),
+          reinterpret_cast<Pack<char, 16>*>(workspace_ptr), workspace_size / 16,
+          num_partitioned_unique, parallel_num);
+      table_ids_ptr = buffer_manager.template Ptr<U>(IdShuffleBufferType::kTableIds);
+      skip_memset = true;
+    } else {
+      table_ids_ptr = nullptr;
+    }
+    if (!skip_memset) {
+      OF_CUDA_CHECK(cudaMemsetAsync(workspace_ptr, 0, workspace_size, cuda_stream));
+      OF_CUDA_CHECK(
+          cudaMemsetAsync(num_partitioned_unique, 0, parallel_num * sizeof(IDX), cuda_stream));
+    }
+    UniqueAndPartition<K, U, IDX, embedding::ShardingHash>(
+        cuda_stream, num_blocks, num_ids, hash_table_capacity, parallel_num,
+        reinterpret_cast<const K*>(ids->dptr()), table_ids_ptr, num_partitioned_unique,
+        partitioned_unique_ids, partitioned_unique_table_ids,
+        reinterpret_cast<IDX*>(inverse_unique_partition_indices->mut_dptr()), workspace_ptr,
+        workspace_size, need_process_table_ids, kernel_state->IsKernelStart(parallel_id));
+
+    IDX* cur_rank_num_unique_ids_ptr = reinterpret_cast<IDX*>(cur_rank_num_unique->mut_dptr());
     Param<K, U, IDX, 8> param;
     CHECK_LE(parallel_num, 8);
     for (int i = 0; i < parallel_num; ++i) {
@@ -441,21 +547,13 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
           kernel_state->PartitionedUniqueTableIds(i) + parallel_id * num_ids;
       param.is_kernel_start[i] = kernel_state->IsKernelStart(i);
     }
-    UniqueAndPartition<K, U, IDX, embedding::ShardingHash>(
-        cuda_stream, num_ids, hash_table_capacity, parallel_num,
-        reinterpret_cast<const K*>(ids->dptr()), table_ids_ptr, num_partitioned_unique,
-        partitioned_unique_ids, partitioned_unique_table_ids,
-        reinterpret_cast<IDX*>(inverse_unique_partition_indices->mut_dptr()), workspace_ptr,
-        workspace_size, need_process_table_ids, kernel_state->IsKernelStart(parallel_id));
-
-    OF_CUDA_CHECK(cudaMemsetAsync(workspace_ptr, 0, workspace_size, cuda_stream));
-    IDX* cur_rank_num_unique_ids_ptr = reinterpret_cast<IDX*>(cur_rank_num_unique->mut_dptr());
-    OF_CUDA_CHECK(cudaMemsetAsync(cur_rank_num_unique_ids_ptr, 0, sizeof(IDX), cuda_stream));
-
     param.num_unique_matrix = num_unique_matrix_ptr;
-    BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
-    const int num_blocks =
-        2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
+    CHECK_EQ(workspace_size % 16, 0);
+    CHECK_EQ(reinterpret_cast<std::uintptr_t>(workspace_ptr) % 16, 0);
+    int workspace_num_pack = workspace_size / 16;
+    BarrierAndMemset<<<num_blocks, 1024, 0, cuda_stream>>>(
+        parallel_id, parallel_num, param, reinterpret_cast<Pack<char, 16>*>(workspace_ptr),
+        workspace_num_pack, cur_rank_num_unique_ids_ptr, 1);
     HashTableUniquePairs<K, U, IDX, embedding::LocalUniqueHash>
         <<<num_blocks, 1024, 0, cuda_stream>>>(
             hash_table_capacity, num_ids, parallel_num, parallel_id, cur_rank_num_unique_ids_ptr,
@@ -463,36 +561,26 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
             reinterpret_cast<K*>(cur_rank_unique_ids->mut_dptr()),
             reinterpret_cast<U*>(cur_rank_unique_table_ids->mut_dptr()),
             reinterpret_cast<IDX*>(cur_rank_inverse_indices->mut_dptr()), need_process_table_ids);
-    BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
-    if (parallel_num > 1) {
-      // use num_partitioned_unique as indices_offset buffer, so should after ncclAllGather.
-      ComputeOffset<<<1, 1, 0, cuda_stream>>>(parallel_num, num_partitioned_unique);
-      ContiguousInverseUniquePartitionIndices<<<BlocksNum4ThreadsNum(num_ids),
-                                                kCudaThreadsNumPerBlock, 0, cuda_stream>>>(
-          num_ids, num_partitioned_unique,
-          reinterpret_cast<IDX*>(inverse_unique_partition_indices->mut_dptr()));
-    }
+
+    IDX* host_num_unique_matrix = kernel_state->HostNumUniqueMatrix();
+    IDX* host_cur_rank_num_unique = kernel_state->HostCurRankNumUnique();
+    BarrierAndComputeOut<<<num_blocks, 1024, 0, cuda_stream>>>(
+        parallel_id, parallel_num, num_ids, param, num_partitioned_unique,
+        reinterpret_cast<IDX*>(inverse_unique_partition_indices->mut_dptr()), num_unique_matrix_ptr,
+        host_num_unique_matrix, cur_rank_num_unique_ids_ptr, host_cur_rank_num_unique);
+
     // if (!need_process_table_ids) {
     //  OF_CUDA_CHECK(cudaMemsetAsync(cur_rank_unique_table_ids->mut_dptr(), 0,
     //                                received_elem_cnt * sizeof(U), cuda_stream));
     //}
     embedding::EmbeddingState* embedding_state = kernel_state->EmbeddingState();
     std::vector<uint32_t> num_unique_matrix_vec(parallel_num * parallel_num);
-    IDX* host_num_unique_matrix = kernel_state->HostNumUniqueMatrix();
-    OF_CUDA_CHECK(cudaMemcpyAsync(host_num_unique_matrix, num_unique_matrix_ptr,
-                                  parallel_num * parallel_num * sizeof(IDX), cudaMemcpyDefault,
-                                  cuda_stream));
     CHECK_JUST(ctx->stream()->Sync());
     std::memcpy(num_unique_matrix_vec.data(), host_num_unique_matrix,
                 parallel_num * parallel_num * sizeof(IDX));
     CHECK_EQ(sizeof(IDX), sizeof(uint32_t)) << "assume sizeof(IDX) equals to sizeof(uint32_t)";
     embedding_state->SetIdNumUniqueMatrix(num_unique_matrix_vec, current_iter_);
-    // reuse HostNumUniqueMatrix ptr
-    IDX* host_num_unique = host_num_unique_matrix;
-    OF_CUDA_CHECK(cudaMemcpyAsync(host_num_unique, cur_rank_num_unique->dptr(), sizeof(IDX),
-                                  cudaMemcpyDefault, cuda_stream));
-    CHECK_JUST(ctx->stream()->Sync());
-    uint32_t final_num_unique = *host_num_unique;
+    uint32_t final_num_unique = *host_cur_rank_num_unique;
     embedding_state->SetIdFinalNumUnique(final_num_unique, current_iter_);
     current_iter_++;
   }
