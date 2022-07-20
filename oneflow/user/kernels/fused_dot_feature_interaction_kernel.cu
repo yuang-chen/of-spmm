@@ -18,6 +18,7 @@ limitations under the License.
 #include "oneflow/core/ep/include/primitive/copy_nd.h"
 #include "oneflow/core/ep/include/primitive/batch_matmul.h"
 #include "oneflow/core/kernel/cuda_graph_support.h"
+#include "oneflow/core/cuda/atomic.cuh"
 #include <mma.h>
 
 namespace oneflow {
@@ -473,8 +474,9 @@ struct DotBwdParam {
 template<typename T, typename ComputeType, int32_t pack_size>
 __device__ __inline__ void AtomicAdd(Pack<T, pack_size>* address,
                                      Pack<ComputeType, pack_size> val) {
+#pragma unroll
   for (int i = 0; i < pack_size; ++i) {
-    atomicAdd(reinterpret_cast<T*>(address) + i, static_cast<T>(val.elem[i]));
+    cuda::atomic::Add(reinterpret_cast<T*>(address) + i, static_cast<T>(val.elem[i]));
   }
 }
 
@@ -483,7 +485,7 @@ __device__ __inline__ void AtomicAdd<half, float, 2>(Pack<half, 2>* address, Pac
   half2 h2_val;
   h2_val.x = static_cast<half>(val.elem[0]);
   h2_val.y = static_cast<half>(val.elem[1]);
-  atomicAdd(reinterpret_cast<half2*>(address), h2_val);
+  cuda::atomic::Add(reinterpret_cast<half2*>(address), h2_val);
 }
 
 template<typename T, typename ComputeType, int32_t max_in, int32_t pack_size,
@@ -1172,8 +1174,7 @@ bool TryLaunchTensorCoreDotBackwardKernel(user_op::KernelComputeContext* ctx) {
   }
 }
 template<typename T>
-class FusedDotFeatureInteractionKernel final : public user_op::OpKernel,
-                                               public user_op::CudaGraphSupport {
+class FusedDotFeatureInteractionKernel final : public user_op::OpKernel {
  public:
   FusedDotFeatureInteractionKernel() = default;
   ~FusedDotFeatureInteractionKernel() override = default;
@@ -1280,8 +1281,7 @@ REGISTER_FUSED_DOT_FEATURE_INTERACTION_KERNEL(float)
 REGISTER_FUSED_DOT_FEATURE_INTERACTION_KERNEL(half)
 
 template<typename T>
-class FusedDotFeatureInteractionGradKernel final : public user_op::OpKernel,
-                                                   public user_op::CudaGraphSupport {
+class FusedDotFeatureInteractionGradKernel final : public user_op::OpKernel {
  public:
   FusedDotFeatureInteractionGradKernel() = default;
   ~FusedDotFeatureInteractionGradKernel() override = default;
