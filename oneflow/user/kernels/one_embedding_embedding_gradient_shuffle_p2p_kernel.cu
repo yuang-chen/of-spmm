@@ -14,12 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include "oneflow/core/framework/framework.h"
-#include "oneflow/core/device/nccl_util.h"
-#include "oneflow/core/job/eager_nccl_comm_manager.h"
 #include "oneflow/core/job/parallel_desc.h"
 #include "oneflow/core/ep/cuda/cuda_stream.h"
-#include "oneflow/user/kernels/gather_kernel_util.h"
-#include "oneflow/user/kernels/unsorted_segment_sum_kernel_util.h"
 #include "oneflow/core/cuda/atomic.cuh"
 #include "oneflow/core/embedding/embedding_manager.h"
 #include "oneflow/core/control/ctrl_client.h"
@@ -125,7 +121,8 @@ void GetPtrs(user_op::KernelComputeContext* ctx,
     OF_CUDA_CHECK(cudaIpcGetMemHandle(&push_handle_offset.at(1).handle,
                                       is_kernel_start_ptr->at(parallel_id)));
     cudaError_t (*func)(void*, CUpointer_attribute, CUdeviceptr);
-    cudaGetDriverEntryPoint("cuPointerGetAttribute", (void**)(&func), cudaEnableDefault);
+    OF_CUDA_CHECK(
+        cudaGetDriverEntryPoint("cuPointerGetAttribute", (void**)(&func), cudaEnableDefault));
     void* embedding_grad_base;
     OF_CUDA_CHECK(func(&embedding_grad_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
                        (CUdeviceptr)(unique_partitioned_embedding_grad_ptr->at(parallel_id))));
@@ -283,9 +280,9 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
     CHECK(!embedding::UseDynamicMemoryAllocation());
     CHECK(ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_FUSE_EMBEDDING_INTERACTION",
                               false));  // only support skip last gather.
-    CHECK(ParseBooleanFromEnv("ADD_IDENTITY",
-                              false));  // when no identity, every time the cur_rank_inverse_indices
-                                        // will change becauseof regster num=2.
+    CHECK(ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_ADD_ID_SHUFFLE_COPY_OUT",
+                              true));  // when no identity, every time the cur_rank_inverse_indices
+                                       // will change becauseof regster num=2.
     auto* kernel_state = dynamic_cast<DataShuffleKernelState<IDX>*>(state);
     CHECK(kernel_state != nullptr);
     const user_op::Tensor* embedding_grad = ctx->Tensor4ArgNameAndIndex("embedding_grad", 0);
@@ -310,6 +307,7 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
     CHECK_EQ(kernel_state->UniquePartitionedEmbeddingGrads()->at(parallel_id),
              embedding_grad->dptr());
     Param<T, IDX, pack_size, 8> param;
+    CHECK_EQ(embedding_size % pack_size, 0);
     CHECK_LE(parallel_num, 8);
     param.cur_rank_unique_embedding_grad_ptr =
         reinterpret_cast<Pack<T, pack_size>*>(cur_rank_unique_embedding_grad->mut_dptr<T>());
@@ -345,9 +343,10 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
 
 REGISTER_USER_KERNEL("embedding_gradient_shuffle")
     .SetCreateFn<EmbeddingGraidientShuffleP2PKernel<half, uint32_t>>()
-    .SetIsMatchedHob((user_op::HobDeviceType() == DeviceType::kCUDA)
-                     && (user_op::HobDataType("embedding_grad", 0) == DataType::kFloat16)
-                     && (user_op::HobDataType("num_unique_matrix", 0) == DataType::kUInt32)
-                     && ParseBooleanFromEnv("EMBEDDING_GRADIENT_SHUFFLE_USE_P2P_KERNEL", false));
+    .SetIsMatchedHob(
+        (user_op::HobDeviceType() == DeviceType::kCUDA)
+        && (user_op::HobDataType("embedding_grad", 0) == DataType::kFloat16)
+        && (user_op::HobDataType("num_unique_matrix", 0) == DataType::kUInt32)
+        && ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_EMBEDDING_GRADIENT_SHUFFLE_USE_P2P", false));
 
 }  // namespace oneflow

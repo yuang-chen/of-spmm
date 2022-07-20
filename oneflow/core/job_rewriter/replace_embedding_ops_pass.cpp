@@ -390,7 +390,7 @@ void BuildIdShuffle(bool use_system_gather, const std::string& embedding_name,
     id_shuffle_new_op_conf.set_stream_name_hint(embedding_name + "_ID_SHUFFLE");
     add_ops->push_back(id_shuffle_new_op_conf);
 
-    if (ParseBooleanFromEnv("ADD_IDENTITY", true)) {
+    if (ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_ADD_ID_SHUFFLE_COPY_OUT", true)) {
       user_op::UserOpConfWrapperBuilder identity_op_builder(
           embedding_op.op_name() + "_id_shuffle_copy_out_" + NewUniqueId());
       user_op::UserOpConfWrapper identity_op =

@@ -14,17 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include "oneflow/core/framework/framework.h"
-#include "oneflow/core/device/nccl_util.h"
-#include "oneflow/core/job/eager_nccl_comm_manager.h"
 #include "oneflow/core/job/parallel_desc.h"
 #include "oneflow/core/ep/cuda/cuda_stream.h"
-#include "oneflow/user/kernels/gather_kernel_util.h"
-#include "oneflow/user/kernels/unsorted_segment_sum_kernel_util.h"
 #include "oneflow/core/cuda/atomic.cuh"
 #include "oneflow/core/embedding/hash_functions.cuh"
-#include "oneflow/core/cuda/elementwise.cuh"
-#include "oneflow/core/ep/include/primitive/copy_nd.h"
-#include "oneflow/core/cuda/atomic.cuh"
 #include "oneflow/core/embedding/embedding_manager.h"
 #include "oneflow/core/control/ctrl_client.h"
 
@@ -100,18 +93,6 @@ struct Param {
   IDX* num_unique_matrix;
   int32_t* counter;
 };
-
-template<typename K, typename V, typename IDX, int N>
-__global__ void BarrierKernel(int32_t parallel_id, int32_t parallel_num,
-                              Param<K, V, IDX, N> param) {
-  int count = param.is_kernel_start[parallel_id][parallel_id];
-  if (threadIdx.x < parallel_num) {
-    volatile int32_t* start_f = param.is_kernel_start[parallel_id];
-    volatile int32_t* remote_start_f = param.is_kernel_start[threadIdx.x];
-    start_f[threadIdx.x] = count + 1;
-    while (remote_start_f[parallel_id] < count + 1) {}
-  }
-}
 
 template<typename T, int pack_size>
 struct alignas(sizeof(T) * pack_size) Pack {
@@ -205,11 +186,6 @@ __global__ void HashTableUniquePairs(const uint32_t table_capacity, const uint32
   }
 }
 
-template<typename U>
-__global__ void GenerateTableIds(int32_t elem_cnt, int32_t num_tables, U* table_ids) {
-  CUDA_1D_KERNEL_LOOP(i, elem_cnt) { table_ids[i] = i % num_tables; }
-}
-
 template<typename U, typename IDX, int pack_size>
 __global__ void GenerateTableIdsAndMemsetUniqueWorkspace(int32_t elem_cnt, int32_t num_tables,
                                                          U* table_ids,
@@ -240,16 +216,7 @@ void UniqueAndPartition(cudaStream_t cuda_stream, int64_t num_blocks, int64_t nu
       is_kernel_start_ptr);
 }
 
-enum class IdShuffleBufferType {
-  kNumPartitionedUnique = 0,
-  kPartitionedUniqueIds,
-  kReceivedIds,
-  kTableIds,
-  kPartitionedUniqueTableIds,
-  kReceivedTableIds,
-  kWorkspace,
-  kMaxType
-};
+enum class IdShuffleBufferType { kTableIds = 0, kWorkspace, kMaxType };
 
 template<typename K, typename U, typename IDX>
 class IdShuffleTmpBufferManager final {
@@ -263,14 +230,7 @@ class IdShuffleTmpBufferManager final {
         ptr_(ptr) {
     const int64_t num_table_ids = need_process_table_ids ? num_ids : 0;
     const size_t table_ids_bytes = need_table_ids ? num_ids * sizeof(U) : 0;
-    AllocBuffer(IdShuffleBufferType::kNumPartitionedUnique, parallel_num * sizeof(IDX));
-    size_t partitioned_ids_bytes = parallel_num * num_ids * sizeof(K);
-    AllocBuffer(IdShuffleBufferType::kPartitionedUniqueIds, partitioned_ids_bytes);
-    AllocBuffer(IdShuffleBufferType::kReceivedIds, partitioned_ids_bytes);
     AllocBuffer(IdShuffleBufferType::kTableIds, table_ids_bytes);
-    size_t partitioned_table_ids_bytes = parallel_num * num_table_ids * sizeof(U);
-    AllocBuffer(IdShuffleBufferType::kPartitionedUniqueTableIds, partitioned_table_ids_bytes);
-    AllocBuffer(IdShuffleBufferType::kReceivedTableIds, partitioned_table_ids_bytes);
     const size_t hash_table_capacity = parallel_num * num_ids;
     AllocBuffer(IdShuffleBufferType::kWorkspace, hash_table_capacity * sizeof(TableEntry<K>));
   }
@@ -306,11 +266,9 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
  public:
   explicit DataShuffleKernelState(user_op::KernelInitContext* ctx)
       : device_index_(-1),
-        stream_name_(EagerNcclCommMgr::kDefaultStreamName),
         parallel_desc_(ctx->parallel_desc()),
         parallel_id_(ctx->parallel_ctx().parallel_id()) {
     OF_CUDA_CHECK(cudaGetDevice(&device_index_));
-    if (ctx->op_conf().has_stream_name_hint()) { stream_name_ = ctx->op_conf().stream_name_hint(); }
     int64_t parallel_num = parallel_desc_.parallel_num();
     OF_CUDA_CHECK(
         cudaMallocHost(&host_num_unique_matrix_, parallel_num * parallel_num * sizeof(IDX)));
@@ -382,8 +340,6 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
 
  private:
   int device_index_;
-  bool has_independent_stream_;
-  std::string stream_name_;
   ParallelDesc parallel_desc_;
   int64_t parallel_id_;
   IDX* host_num_unique_matrix_;
@@ -395,28 +351,6 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   size_t is_kernel_start_size_;
   embedding::EmbeddingState* embedding_state_;
 };
-
-template<typename IDX>
-__global__ void ComputeOffset(int32_t n, IDX* value) {
-  IDX sum = 0;
-  for (int i = 0; i < n; ++i) {
-    IDX count = value[i];
-    value[i] = sum;
-    sum += count;
-  }
-}
-
-template<typename IDX>
-__global__ void ContiguousInverseUniquePartitionIndices(const int32_t num_ids, IDX* indices_offset,
-                                                        IDX* inverse_ptr) {
-  CUDA_1D_KERNEL_LOOP(i, num_ids) {
-    int inverse_indice = inverse_ptr[i];
-    int partition_id = inverse_indice / num_ids;
-    int partition_indice = inverse_indice - partition_id * num_ids;
-    int new_offset = indices_offset[partition_id];
-    inverse_ptr[i] = new_offset + partition_indice;
-  }
-}
 
 template<typename K, typename V, typename IDX, int N>
 __global__ void BarrierAndComputeOut(int32_t parallel_id, int32_t parallel_num, int32_t num_ids,
@@ -594,12 +528,13 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
   OF_PP_MAKE_TUPLE_SEQ(int32_t, DataType::kInt32)   \
   OF_PP_MAKE_TUPLE_SEQ(int64_t, DataType::kInt64)
 
-#define TABLE_ID_DATA_TYPE_SEQ OF_PP_MAKE_TUPLE_SEQ(uint8_t, DataType::kUInt8)
-//OF_PP_MAKE_TUPLE_SEQ(uint32_t, DataType::kUInt32) \
-  //OF_PP_MAKE_TUPLE_SEQ(uint64_t, DataType::kUInt64) \
-  //OF_PP_MAKE_TUPLE_SEQ(int8_t, DataType::kInt8)     \
-  //OF_PP_MAKE_TUPLE_SEQ(int32_t, DataType::kInt32)   \
-  //OF_PP_MAKE_TUPLE_SEQ(int64_t, DataType::kInt64)
+#define TABLE_ID_DATA_TYPE_SEQ                      \
+  OF_PP_MAKE_TUPLE_SEQ(uint8_t, DataType::kUInt8)   \
+  OF_PP_MAKE_TUPLE_SEQ(uint32_t, DataType::kUInt32) \
+  OF_PP_MAKE_TUPLE_SEQ(uint64_t, DataType::kUInt64) \
+  OF_PP_MAKE_TUPLE_SEQ(int8_t, DataType::kInt8)     \
+  OF_PP_MAKE_TUPLE_SEQ(int32_t, DataType::kInt32)   \
+  OF_PP_MAKE_TUPLE_SEQ(int64_t, DataType::kInt64)
 
 #define IDX_DATA_TYPE_SEQ                           \
   OF_PP_MAKE_TUPLE_SEQ(uint32_t, DataType::kUInt32) \
@@ -616,7 +551,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
           && (user_op::HobDataType("cur_rank_unique_table_ids", 0)                               \
               == OF_PP_PAIR_SECOND(table_id_dtype_pair))                                         \
           && (user_op::HobDataType("num_unique_matrix", 0) == OF_PP_PAIR_SECOND(idx_dtype_pair)) \
-          && ParseBooleanFromEnv("USE_P2P_KERNEL", false))                                       \
+          && ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_ID_SHUFFLE_USE_P2P", false))             \
       .SetInferTmpSizeFn([](user_op::InferContext* ctx) {                                        \
         const user_op::TensorDesc& ids = ctx->InputTensorDesc("ids", 0);                         \
         const bool has_table_ids = ctx->has_input("table_ids", 0);                               \

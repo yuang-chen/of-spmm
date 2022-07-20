@@ -17,15 +17,13 @@ limitations under the License.
 #include "oneflow/core/common/spin_counter.h"
 #include "oneflow/core/common/singleton.h"
 #include "oneflow/core/common/foreign_lock_helper.h"
-#include<thread>
+#include <thread>
 
 namespace oneflow {
 
 Maybe<void> SpinCounter::WaitUntilCntEqualZero() const {
   return Singleton<ForeignLockHelper>::Get()->WithScopedRelease([&]() -> Maybe<void> {
-    while (cnt_val_ > 0) {
-     std::this_thread::yield();
-    };
+    while (cnt_val_ > 0) { std::this_thread::yield(); };
     return Maybe<void>::Ok();
   });
 }

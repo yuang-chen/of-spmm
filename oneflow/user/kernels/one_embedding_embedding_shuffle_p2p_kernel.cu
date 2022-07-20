@@ -14,39 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include "oneflow/core/framework/framework.h"
-#include "oneflow/core/device/nccl_util.h"
-#include "oneflow/core/job/eager_nccl_comm_manager.h"
 #include "oneflow/core/job/parallel_desc.h"
 #include "oneflow/core/ep/cuda/cuda_stream.h"
-#include "oneflow/user/kernels/gather_kernel_util.h"
-#include "oneflow/user/kernels/unsorted_segment_sum_kernel_util.h"
 #include "oneflow/core/cuda/atomic.cuh"
 #include "oneflow/core/embedding/embedding_manager.h"
 #include "oneflow/core/control/ctrl_client.h"
-#include "oneflow/core/ep/include/primitive/memcpy.h"
-#include "absl/strings/str_cat.h"
 #include "oneflow/core/kernel/cuda_graph_support.h"
 
 namespace oneflow {
 
 namespace {
-
-void DumpToFile(ep::Stream* stream, std::string filename, int64_t parallel_id, size_t data_size,
-                const void* ptr) {
-  void* host_ptr;
-  OF_CUDA_CHECK(cudaMallocHost(&host_ptr, data_size));
-  std::unique_ptr<ep::primitive::Memcpy> copyd2h_primitive =
-      ep::primitive::NewPrimitive<ep::primitive::MemcpyFactory>(DeviceType::kCUDA,
-                                                                ep::primitive::MemcpyKind::kDtoH);
-  CHECK(copyd2h_primitive);
-  copyd2h_primitive->Launch(stream, host_ptr, ptr, data_size);
-  CHECK_JUST(stream->Sync());
-  std::ofstream dx_os;
-  dx_os.open(StrCat("test/" + filename + "_", parallel_id));
-  dx_os.write(reinterpret_cast<char*>(host_ptr), data_size);
-  dx_os.close();
-  OF_CUDA_CHECK(cudaFreeHost(host_ptr));
-}
 
 template<typename T, int pack_size>
 struct alignas(sizeof(T) * pack_size) Pack {
@@ -150,6 +127,10 @@ struct IpcMemHandleOffset {
   int64_t offset;
 };
 
+bool DisableFuseGatherCopy() {
+  return ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_P2P_DISABLE_FUSE_GATHER_COPY", false);
+}
+
 void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embeddings_ptr,
              std::vector<void*>* inverse_indices_ptr, std::vector<void*>* is_kernel_start_ptr) {
   const int64_t num_ids =
@@ -158,7 +139,7 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
   const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
   inverse_indices_ptr->at(parallel_id) =
       const_cast<void*>(ctx->Tensor4ArgNameAndIndex("cur_rank_inverse_indices", 0)->dptr());
-  if (ParseBooleanFromEnv("EMBEDDING_SHUFFLE_GATHER_THAN_COPY", true)) {
+  if (DisableFuseGatherCopy()) {
     unique_embeddings_ptr->at(parallel_id) =
         ctx->Tensor4ArgNameAndIndex("tmp_buffer", 0)->mut_dptr();
   } else {
@@ -290,9 +271,9 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel, public user_op
     CHECK(!embedding::UseDynamicMemoryAllocation());
     CHECK(ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_FUSE_EMBEDDING_INTERACTION",
                               false));  // only support skip last gather.
-    CHECK(ParseBooleanFromEnv("ADD_IDENTITY",
-                              false));  // when no identity, every time the cur_rank_inverse_indices
-                                        // will change becauseof regster num=2.
+    CHECK(ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_ADD_ID_SHUFFLE_COPY_OUT",
+                              true));  // when no identity, every time the cur_rank_inverse_indices
+                                       // will change becauseof regster num=2.
     auto* kernel_state = dynamic_cast<DataShuffleKernelState<IDX>*>(state);
     CHECK(kernel_state != nullptr);
     const user_op::Tensor* num_unique_matrix = ctx->Tensor4ArgNameAndIndex("num_unique_matrix", 0);
@@ -329,7 +310,7 @@ class EmbeddingShuffleP2PKernel final : public user_op::OpKernel, public user_op
     const int num_blocks =
         2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
 
-    if (ParseBooleanFromEnv("EMBEDDING_SHUFFLE_GATHER_THAN_COPY", true)) {
+    if (DisableFuseGatherCopy()) {
       CHECK_EQ(kernel_state->UniqueEmbeddings()->at(parallel_id),
                ctx->Tensor4ArgNameAndIndex("tmp_buffer", 0)->dptr())
           << parallel_id;
@@ -364,7 +345,8 @@ REGISTER_USER_KERNEL("embedding_shuffle")
     .SetIsMatchedHob((user_op::HobDeviceType() == DeviceType::kCUDA)
                      && (user_op::HobDataType("cur_rank_embeddings", 0) == DataType::kFloat16)
                      && (user_op::HobDataType("num_unique_matrix", 0) == DataType::kUInt32)
-                     && ParseBooleanFromEnv("EMBEDDING_SHUFFLE_USE_P2P_KERNEL", false))
+                     && ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_EMBEDDING_SHUFFLE_USE_P2P",
+                                            false))
     .SetInferTmpSizeFn([](user_op::InferContext* ctx) {
       return GetCudaAlignedSize(ctx->InputTensorDesc("cur_rank_embeddings", 0).shape().elem_cnt()
                                 * sizeof(half));
