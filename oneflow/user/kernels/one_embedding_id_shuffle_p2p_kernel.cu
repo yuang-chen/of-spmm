@@ -503,10 +503,11 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
         reinterpret_cast<IDX*>(inverse_unique_partition_indices->mut_dptr()), num_unique_matrix_ptr,
         host_num_unique_matrix, cur_rank_num_unique_ids_ptr, host_cur_rank_num_unique);
 
-    // if (!need_process_table_ids) {
-    //  OF_CUDA_CHECK(cudaMemsetAsync(cur_rank_unique_table_ids->mut_dptr(), 0,
-    //                                received_elem_cnt * sizeof(U), cuda_stream));
-    //}
+    if (!need_process_table_ids) {
+      OF_CUDA_CHECK(cudaMemsetAsync(cur_rank_unique_table_ids->mut_dptr(), 0,
+                                    cur_rank_unique_table_ids->shape_view().elem_cnt() * sizeof(U),
+                                    cuda_stream));
+    }
     embedding::EmbeddingState* embedding_state = kernel_state->EmbeddingState();
     std::vector<uint32_t> num_unique_matrix_vec(parallel_num * parallel_num);
     CHECK_JUST(ctx->stream()->Sync());
