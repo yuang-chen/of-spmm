@@ -55,6 +55,8 @@ CudaDevice::CudaDevice(int device_index, DeviceManager* device_manager)
       const_ones_buffer_bf16_(nullptr) {
   CudaCurrentDeviceGuard guard(device_index_);
   OF_CUDA_CHECK(cudaGetDeviceProperties(&properties_, device_index_));
+  uint32_t device_schedule = ParseIntegerFromEnv("ONEFLOW_EP_CUDA_DEVICE_SCHEDULE", cudaDeviceScheduleAuto);
+  OF_CUDA_CHECK(cudaSetDeviceFlags(device_schedule));
   event_flags_ = cudaEventDisableTiming;
   if (ParseBooleanFromEnv("ONEFLOW_STREAM_CUDA_EVENT_FLAG_BLOCKING_SYNC", false)) {
     event_flags_ |= cudaEventBlockingSync;
