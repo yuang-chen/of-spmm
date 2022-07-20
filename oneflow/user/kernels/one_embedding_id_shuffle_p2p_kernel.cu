@@ -287,23 +287,6 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
     buffer_ptrs_.resize(parallel_num);
     cudaMalloc(&buffer_ptrs_.at(parallel_id), buffer_size);
     cudaMemset(buffer_ptrs_.at(parallel_id), 0, buffer_size);
-    std::string name = ctx->op_name();
-    for (int64_t i = 0; i < parallel_num; ++i) {
-      std::string key = name + std::to_string(i);
-      if (parallel_id == i) {
-        cudaIpcMemHandle_t handle;
-        OF_CUDA_CHECK(cudaIpcGetMemHandle(&handle, buffer_ptrs_.at(parallel_id)));
-        Singleton<CtrlClient>::Get()->PushKV(
-            key, std::string(reinterpret_cast<const char*>(&handle), sizeof(cudaIpcMemHandle_t)));
-      } else {
-        cudaIpcMemHandle_t handle;
-        Singleton<CtrlClient>::Get()->PullKV(key, [&handle](const std::string& val) {
-          memcpy(&handle, val.data(), sizeof(cudaIpcMemHandle_t));
-        });
-        OF_CUDA_CHECK(
-            cudaIpcOpenMemHandle(&buffer_ptrs_.at(i), handle, cudaIpcMemLazyEnablePeerAccess));
-      }
-    }
   }
   ~DataShuffleKernelState() {
     CudaCurrentDeviceGuard guard(device_index_);
@@ -311,6 +294,8 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
     OF_CUDA_CHECK(cudaFreeHost(host_num_unique_matrix_));
     OF_CUDA_CHECK(cudaFree(buffer_ptrs_.at(parallel_id_)));
   }
+
+  std::vector<void*>* BufferPtrs() { return &buffer_ptrs_; }
 
   IDX* HostNumUniqueMatrix() { return host_num_unique_matrix_; }
 
@@ -351,6 +336,28 @@ class DataShuffleKernelState final : public user_op::OpKernelState {
   size_t is_kernel_start_size_;
   embedding::EmbeddingState* embedding_state_;
 };
+
+void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* buffer_ptrs) {
+  const int64_t parallel_id = ctx->parallel_ctx().parallel_id();
+  const int64_t parallel_num = ctx->parallel_ctx().parallel_num();
+  std::string name = ctx->op_name();
+  cudaIpcMemHandle_t handle;
+  OF_CUDA_CHECK(cudaIpcGetMemHandle(&handle, buffer_ptrs->at(parallel_id)));
+  Singleton<CtrlClient>::Get()->PushKV(
+      name + std::to_string(parallel_id),
+      std::string(reinterpret_cast<const char*>(&handle), sizeof(cudaIpcMemHandle_t)));
+  for (int64_t i = 0; i < parallel_num; ++i) {
+    std::string key = name + std::to_string(i);
+    if (parallel_id != i) {
+      cudaIpcMemHandle_t handle;
+      Singleton<CtrlClient>::Get()->PullKV(key, [&handle](const std::string& val) {
+        memcpy(&handle, val.data(), sizeof(cudaIpcMemHandle_t));
+      });
+      OF_CUDA_CHECK(
+          cudaIpcOpenMemHandle(&buffer_ptrs->at(i), handle, cudaIpcMemLazyEnablePeerAccess));
+    }
+  }
+}
 
 template<typename K, typename V, typename IDX, int N>
 __global__ void BarrierAndComputeOut(int32_t parallel_id, int32_t parallel_num, int32_t num_ids,
@@ -432,7 +439,7 @@ class IdShuffleP2PKernel final : public user_op::OpKernel {
     IdShuffleTmpBufferManager<K, U, IDX> buffer_manager(
         tmp_buffer->mut_dptr(), num_ids, parallel_num, need_gen_table_ids, need_process_table_ids);
     CHECK_GE(tmp_buffer->shape_view().elem_cnt(), buffer_manager.TotalBufferSize());
-
+    if (current_iter_ == 0) { GetPtrs(ctx, kernel_state->BufferPtrs()); }
     const int num_blocks =
         2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
     IDX* num_partitioned_unique = kernel_state->NumPartitionedUnique(parallel_id);

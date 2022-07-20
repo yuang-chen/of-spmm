@@ -334,7 +334,6 @@ class EmbeddingGraidientShuffleP2PKernel final : public user_op::OpKernel,
         2 * ctx->stream()->As<ep::CudaStream>()->device_properties().multiProcessorCount;
     EmbeddingGraidientShuffleCudaKernel<<<num_blocks, 1024, 0, cuda_stream>>>(
         parallel_id, parallel_num, embedding_num_pack, param);
-    // BarrierKernel<<<1, parallel_num, 0, cuda_stream>>>(parallel_id, parallel_num, param);
     current_iter_++;
   }
   bool AlwaysComputeWhenAllOutputsEmpty() const override { return false; }

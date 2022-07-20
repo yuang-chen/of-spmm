@@ -159,7 +159,8 @@ void GetPtrs(user_op::KernelComputeContext* ctx, std::vector<void*>* unique_embe
                                       is_kernel_start_ptr->at(parallel_id)));
 
     cudaError_t (*func)(void*, CUpointer_attribute, CUdeviceptr);
-    cudaGetDriverEntryPoint("cuPointerGetAttribute", (void**)(&func), cudaEnableDefault);
+    OF_CUDA_CHECK(
+        cudaGetDriverEntryPoint("cuPointerGetAttribute", (void**)(&func), cudaEnableDefault));
     void* unique_embeddings_base;
     OF_CUDA_CHECK(func(&unique_embeddings_base, CU_POINTER_ATTRIBUTE_RANGE_START_ADDR,
                        (CUdeviceptr)(unique_embeddings_ptr->at(parallel_id))));
