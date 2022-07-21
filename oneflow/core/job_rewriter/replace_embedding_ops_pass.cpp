@@ -115,8 +115,8 @@ void BuildEmbeddingLookup(JobPassCtx* ctx, JobBuilder* job_builder, const int64_
   std::string context_lbn;
   if (has_embedding_prefetch) {
     // embedding prefetch op
-    user_op::UserOpConfWrapperBuilder embedding_prefetch_op_builder(embedding_op.op_name()
-                                                                    + "_embedding_prefetch");
+    user_op::UserOpConfWrapperBuilder embedding_prefetch_op_builder(
+        embedding_op.op_name() + "_embedding_prefetch" + NewUniqueId());
     user_op::UserOpConfWrapper embedding_prefetch_op =
         embedding_prefetch_op_builder.OpTypeName("embedding_prefetch")
             .Input("num_unique_ids", num_unique_ids_lbn)
@@ -136,8 +136,8 @@ void BuildEmbeddingLookup(JobPassCtx* ctx, JobBuilder* job_builder, const int64_
   }
 
   // embedding lookup op
-  user_op::UserOpConfWrapperBuilder embedding_lookup_op_builder(embedding_op.op_name()
-                                                                + "_embedding_lookup");
+  user_op::UserOpConfWrapperBuilder embedding_lookup_op_builder(
+      embedding_op.op_name() + "_embedding_lookup" + NewUniqueId());
   embedding_lookup_op_builder.OpTypeName("embedding_lookup")
       .Input("num_unique_ids", num_unique_ids_lbn)
       .Input("unique_ids", unique_ids_lbn)
@@ -261,7 +261,7 @@ void BuildEmbeddingGradientShuffle(
             .Build();
     OperatorConf embedding_gradient_shuffle_new_op_conf = embedding_gradient_shuffle_op.op_conf();
     if (ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_EMBEDDING_GRADIENT_SHUFFLE_INDEPENTENT_STREAM",
-                            false)) {
+                            true)) {
       embedding_gradient_shuffle_new_op_conf.set_stream_name_hint(embedding_name + "_EMBEDDING");
     }
     job_builder->AddOps(embedding_parallel_conf, {embedding_gradient_shuffle_new_op_conf});

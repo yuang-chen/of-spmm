@@ -84,10 +84,12 @@ CudaStream::CudaStream(CudaDevice* device)
     : device_index_(device->device_index()), device_(device) {
   CudaCurrentDeviceGuard guard(device_index_);
   // cuda_stream
-  if (!ParseBooleanFromEnv("ONEFLOW_EP_CUDA_STREAM_NON_BLOCKING", false)) {
-    OF_CUDA_CHECK(cudaStreamCreate(&cuda_stream_));
+  const char* stream_flags_env_name = "ONEFLOW_EP_CUDA_STREAM_FLAGS";
+  if (std::getenv(stream_flags_env_name) != nullptr) {
+    const unsigned int stream_flags = ParseIntegerFromEnv(stream_flags_env_name, 0);
+    OF_CUDA_CHECK(cudaStreamCreateWithFlags(&cuda_stream_, stream_flags));
   } else {
-    OF_CUDA_CHECK(cudaStreamCreateWithFlags(&cuda_stream_, cudaStreamNonBlocking));
+    OF_CUDA_CHECK(cudaStreamCreate(&cuda_stream_));
   }
   // cublas_handle
   OF_CUBLAS_CHECK(cublasCreate(&cublas_handle_));
