@@ -340,7 +340,7 @@ class BinaryCrossEntropyWithLogitsReduceMeanGradKernel final : public user_op::O
         OF_CUDA_CHECK(GetNumBlocks(                                                             \
             FusedBinaryCrossEntropyWithLogitsReduceMeanKernel<dtype, ComputeType, ComputeType>, \
             kBlockSize, 0, block_num, 32, &launch_block));                                      \
-        const int64_t tmp_buffer_size = GetCudaAlignedSize(launch_block * sizeof(dtype));       \
+        const int64_t tmp_buffer_size = GetCudaAlignedSize(launch_block * sizeof(ComputeType)); \
         return tmp_buffer_size;                                                                 \
       });
 
