@@ -78,6 +78,9 @@ class FuseBCEReduceMeanFwBwPass final : public JobPass {
 
 Maybe<void> FuseBCEReduceMeanFwBwPass::Apply(const OpGraph& op_graph,
                                              JobBuilder* job_builder) const {
+  // This pass fuse binary_cross_entropy_with_logits_reduce_mean and
+  // binary_cross_entropy_with_logits_reduce_mean_grad. delete the h2f cast to loss, and the
+  // constant_like of dy.
   const auto IsSafeToDelete = MakePredicatorIsSafeToDelete(op_graph);
   HashMap<std::string, OperatorConf> op_name2op_conf;
   std::vector<OperatorConf> delete_ops;
@@ -86,7 +89,27 @@ Maybe<void> FuseBCEReduceMeanFwBwPass::Apply(const OpGraph& op_graph,
                               "binary_cross_entropy_with_logits_reduce_mean")) {
       return;
     }
-    if (op_node->out_edges().size() != 2) { return; }
+    if (op_node->out_edges().size() > 2) { return; }
+    bool find_grad_op = false;
+    for (const OpEdge* out_edge : op_node->out_edges()) {
+      const OpNode* consumer = out_edge->dst_node();
+      if (!IsSafeToDelete(consumer)) { return; }
+      if (!(IsUserOpWithTypeName(consumer->op().op_conf(), "cast")
+            || consumer->op().op_conf().has_constant_like_conf()
+            || consumer->op().op_conf().has_output_conf())) {
+        return;
+      }
+      if (consumer->op().op_conf().has_constant_like_conf()) {
+        const OpNode* grad_node = consumer->SoleOutEdge()->dst_node();
+        if (!IsUserOpWithTypeName(grad_node->op().op_conf(),
+                                  "binary_cross_entropy_with_logits_reduce_mean_grad")) {
+          return;
+        }
+        find_grad_op = true;
+        if (!IsSafeToDelete(grad_node)) { return; }
+      }
+    }
+    if (!find_grad_op) { return; }
     const user_op::UserOpConfWrapper bce_op_conf(op_node->op().op_conf());
     user_op::UserOpConfWrapperBuilder fused_op_builder(bce_op_conf.op_name());
     fused_op_builder.OpTypeName("fused_bce_reduce_mean_fw_bw")
@@ -96,50 +119,40 @@ Maybe<void> FuseBCEReduceMeanFwBwPass::Apply(const OpGraph& op_graph,
         .Output("dx");
     for (const OpEdge* out_edge : op_node->out_edges()) {
       const OpNode* consumer = out_edge->dst_node();
-      // if(IsSafeToDelete(consumer)) {
-      //   LOG(ERROR)<<"return"<<consumer->op().op_name();
-      //  return;}
       if (IsUserOpWithTypeName(consumer->op().op_conf(), "cast")) {
         const user_op::UserOpConfWrapper cast_conf(consumer->op().op_conf());
         fused_op_builder.Attr<DataType>("out_dtype", cast_conf.attr<DataType>("dtype"));
+        // delete cast and update cast consumer's in.
+        delete_ops.push_back(consumer->op().op_conf());
         for (const OpEdge* cast_out_edge : consumer->out_edges()) {
           const OpNode* cast_consumer = cast_out_edge->dst_node();
           UpdateConsumerOpConf(cast_consumer, GenLogicalBlobId(cast_conf.output("out", 0)),
-                               bce_op_conf.op_name() + "/out_0", &op_name2op_conf);
+                               GenLogicalBlobName(bce_op_conf.op_name(), "out_0"),
+                               &op_name2op_conf);
         }
-        // update cast out consumer
       } else if (consumer->op().op_conf().has_constant_like_conf()) {
         fused_op_builder.Attr<double>(
             "constant_value", consumer->op().op_conf().constant_like_conf().float_operand());
         const OpNode* grad_node = consumer->SoleOutEdge()->dst_node();
-        if (!IsUserOpWithTypeName(grad_node->op().op_conf(),
-                                  "binary_cross_entropy_with_logits_reduce_mean_grad")) {
-          LOG(ERROR) << "return";
-          return;
-        }
-        // if(IsSafeToDelete(grad_node)) {
-        // LOG(ERROR)<<"return";
-        //
-        //  return;}
+        // delete constant_like and grad op, update consumer
         delete_ops.push_back(grad_node->op().op_conf());
+        delete_ops.push_back(consumer->op().op_conf());
         const user_op::UserOpConfWrapper grad_conf(grad_node->op().op_conf());
         for (const OpEdge* grad_out_edge : grad_node->out_edges()) {
           const OpNode* grad_consumer = grad_out_edge->dst_node();
           UpdateConsumerOpConf(grad_consumer, GenLogicalBlobId(grad_conf.output("dx", 0)),
-                               bce_op_conf.op_name() + "/dx_0", &op_name2op_conf);
+                               GenLogicalBlobName(bce_op_conf.op_name(), "dx_0"), &op_name2op_conf);
         }
-
       } else {
-        return;
+        continue;
       }
-      delete_ops.push_back(consumer->op().op_conf());
     }
     user_op::UserOpConfWrapper fused_op =
         fused_op_builder.ScopeSymbolId(bce_op_conf.op_conf().scope_symbol_id()).Build();
     job_builder->MutOpsOnlyOnce({fused_op.op_conf()});
   });
-  for (const auto& pair : op_name2op_conf) { job_builder->MutOpsOnlyOnce({pair.second}); }
   job_builder->DelOps(delete_ops);
+  for (const auto& pair : op_name2op_conf) { job_builder->MutOpsOnlyOnce({pair.second}); }
   return Maybe<void>::Ok();
 }
 

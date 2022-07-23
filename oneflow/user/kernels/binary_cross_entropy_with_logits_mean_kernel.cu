@@ -106,30 +106,6 @@ __device__ __forceinline__ half Sigmoid(const half x) {
   return __float2half(Sigmoid(__half2float(x)));
 }
 
-template<typename In, typename Out, typename ComputeType>
-__global__ void FusedBCEReduceMeanFwBwKernel(const In* input, const In* target, Out* out,
-                                             In* input_grad, const ComputeType constant_output_grad,
-                                             const ComputeType elem_cnt_reciprocal,
-                                             const int32_t local_elem_cnt,
-                                             const int32_t reduce_elem_cnt) {
-  ComputeType zero = static_cast<ComputeType>(0.0);
-  ComputeType one = static_cast<ComputeType>(1.0);
-  using BlockReduce = cub::BlockReduce<ComputeType, kBlockSize>;
-  __shared__ typename BlockReduce::TempStorage temp_storage;
-  ComputeType reduce_sum = 0.0;
-  CUDA_1D_KERNEL_LOOP(i, local_elem_cnt) {
-    const ComputeType input_val = static_cast<ComputeType>(input[i]);
-    const ComputeType target_val = static_cast<ComputeType>(target[i]);
-    const ComputeType max_val = -input_val < zero ? zero : -input_val;
-    const ComputeType result =
-        (one - target_val) * input_val + max_val + (log(exp(-max_val) + exp(-input_val - max_val)));
-    input_grad[i] = (Sigmoid(input_val) - target_val) * constant_output_grad * elem_cnt_reciprocal;
-    reduce_sum += result;
-  }
-  const ComputeType block_reduce_sum = BlockReduce(temp_storage).Sum(reduce_sum);
-  if (threadIdx.x == 0) { out[blockIdx.x] = static_cast<Out>(block_reduce_sum / reduce_elem_cnt); }
-}
-
 template<typename T, typename ComputeType>
 struct BinaryCrossEntropyWithLogitsReduceMeanGradFunctor {
   OF_DEVICE_FUNC explicit BinaryCrossEntropyWithLogitsReduceMeanGradFunctor(
@@ -154,6 +130,32 @@ struct BinaryCrossEntropyWithLogitsReduceMeanGradDyptrFunctor {
   const T* dy_ptr;
   const T elem_cnt_reciprocal;
 };
+
+template<typename In, typename Out, typename ComputeType>
+__global__ void FusedBCEReduceMeanFwBwKernel(const In* input, const In* target, Out* out,
+                                             In* input_grad, const ComputeType constant_output_grad,
+                                             const ComputeType elem_cnt_reciprocal,
+                                             const int32_t local_elem_cnt,
+                                             const int32_t reduce_elem_cnt) {
+  ComputeType zero = static_cast<ComputeType>(0.0);
+  ComputeType one = static_cast<ComputeType>(1.0);
+  BinaryCrossEntropyWithLogitsReduceMeanGradFunctor<In, ComputeType> grad_functor(
+      elem_cnt_reciprocal, constant_output_grad);
+  using BlockReduce = cub::BlockReduce<ComputeType, kBlockSize>;
+  __shared__ typename BlockReduce::TempStorage temp_storage;
+  ComputeType reduce_sum = 0.0;
+  CUDA_1D_KERNEL_LOOP(i, local_elem_cnt) {
+    const ComputeType input_val = static_cast<ComputeType>(input[i]);
+    const ComputeType target_val = static_cast<ComputeType>(target[i]);
+    const ComputeType max_val = -input_val < zero ? zero : -input_val;
+    const ComputeType result =
+        (one - target_val) * input_val + max_val + (log(exp(-max_val) + exp(-input_val - max_val)));
+    input_grad[i] = grad_functor(input_val, target_val);
+    reduce_sum += result;
+  }
+  const ComputeType block_reduce_sum = BlockReduce(temp_storage).Sum(reduce_sum);
+  if (threadIdx.x == 0) { out[blockIdx.x] = static_cast<Out>(block_reduce_sum / reduce_elem_cnt); }
+}
 
 template<typename T, typename U>
 class FusedBCEMeanFwBwKernel final : public user_op::OpKernel, public CudaGraphSupport {
@@ -378,6 +380,7 @@ REGISTER_BINARY_CROSS_ENTROPY_REDUCE_MEAN_GRAD_KERNEL(double)
         return tmp_buffer_size;                                                                  \
       });
 REGISTER_FUSED_BCE_REDUCE_MEAN_FW_BW_KERNEL(half, float)
+REGISTER_FUSED_BCE_REDUCE_MEAN_FW_BW_KERNEL(float, float)
 
 }  // namespace user_op
 }  // namespace oneflow

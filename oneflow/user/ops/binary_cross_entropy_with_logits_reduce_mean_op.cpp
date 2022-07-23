@@ -175,8 +175,9 @@ REGISTER_USER_OP_GRAD("binary_cross_entropy_with_logits_reduce_mean")
   const user_op::TensorDesc& target_desc = ctx->InputTensorDesc("target", 0);
   CHECK_EQ_OR_RETURN(input_desc.data_type(), target_desc.data_type())
       << "Input datatype should be equal to Target datatype. ";
-  *ctx->OutputDType("out", 0) = ctx->Attr<DataType>("out_dtype");
-  ;
+  DataType out_dtype = ctx->Attr<DataType>("out_dtype");
+  if (out_dtype == DataType::kInvalidDataType) { out_dtype = input_desc.data_type(); }
+  *ctx->OutputDType("out", 0) = out_dtype;
   *ctx->OutputDType("dx", 0) = input_desc.data_type();
   return Maybe<void>::Ok();
 }
