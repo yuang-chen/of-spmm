@@ -60,6 +60,10 @@ inline bool UseEmbeddingShuffleP2PKernel(DataType embedding_dtype, DataType idx_
       // p2p kernel not support quantize comm.
       return false;
     }
+    if (UseDynamicMemoryAllocation()) {
+      // p2p kernel not support dynamic memory allocation.
+      return false;
+    }
   }
   return use_embedding_shuffle_p2p_env;
 }
@@ -82,6 +86,10 @@ inline bool UseEmbeddingGradientShuffleP2PKernel(DataType embedding_dtype, DataT
     }
     if (enable_quantized_comm) {
       // p2p kernel not support quantize comm.
+      return false;
+    }
+    if (UseDynamicMemoryAllocation()) {
+      // p2p kernel not support dynamic memory allocation.
       return false;
     }
   }
