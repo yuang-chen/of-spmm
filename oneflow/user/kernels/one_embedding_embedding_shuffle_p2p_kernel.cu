@@ -346,8 +346,9 @@ REGISTER_USER_KERNEL("embedding_shuffle")
     .SetIsMatchedHob((user_op::HobDeviceType() == DeviceType::kCUDA)
                      && (user_op::HobDataType("cur_rank_embeddings", 0) == DataType::kFloat16)
                      && (user_op::HobDataType("num_unique_matrix", 0) == DataType::kUInt32)
-                     && ParseBooleanFromEnv("ONEFLOW_ONE_EMBEDDING_EMBEDDING_SHUFFLE_USE_P2P",
-                                            false))
+                     && (user_op::HobAttr<bool>("skip_last_gather") == true)
+                     && (embedding::UseEmbeddingShuffleP2PKernel(DataType::kFloat16,
+                                                                 DataType::kUInt32)))
     .SetInferTmpSizeFn([](user_op::InferContext* ctx) {
       return GetCudaAlignedSize(ctx->InputTensorDesc("cur_rank_embeddings", 0).shape().elem_cnt()
                                 * sizeof(half));
