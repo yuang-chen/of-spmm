@@ -1774,6 +1774,7 @@ def OneFlow_RawReaderOp : OneFlow_BaseOp<"raw_reader", [NoSideEffect, NoGrad, De
     OneFlow_DataType:$data_type,
     ShapeAttr:$shape,
     SI64Attr:$batch_size,
+    SI64Attr:$shuffle_block_size,
     DefaultValuedAttr<BoolAttr, "true">:$random_shuffle,
     DefaultValuedAttr<SI64Attr, "0">:$seed,
     StrArrayAttr:$nd_sbp
@@ -6379,8 +6380,8 @@ def OneFlow_MultiTensorAdamUpdateWithCastOp : OneFlow_BaseOp<"multi_tensor_adam_
 #endif // GET_ONEFLOW_OPTIMIZER_OP_DEFINITIONS
 
 // Group: PADDING
-// pad, reflection_pad2d, reflection_pad2d_grad, replication_pad2d, replication_pad2d_grad, same_padding, same_padding_grad
-// Total: 7
+// pad, reflection_pad1d, reflection_pad1d_grad, reflection_pad2d, reflection_pad2d_grad, replication_pad1d, replication_pad1d_grad, replication_pad2d, replication_pad2d_grad, same_padding, same_padding_grad
+// Total: 11
 
 #ifdef GET_ONEFLOW_PADDING_OP_DEFINITIONS
 
@@ -6405,6 +6406,71 @@ def OneFlow_PadOp : OneFlow_BaseOp<"pad", [NoSideEffect, DeclareOpInterfaceMetho
   let has_data_type_infer_fn = 1;
 }
 
+def OneFlow_ReplicationPad1DOp : OneFlow_BaseOp<"replication_pad1d", [NoSideEffect, DeclareOpInterfaceMethods<UserOpCompatibleInterface>]> {
+  let input = (ins
+    OneFlow_Tensor:$x
+  );
+  let output = (outs
+    OneFlow_Tensor:$y
+  );
+  let attrs = (ins
+    SI64ArrayAttr:$padding
+  );
+  let has_logical_tensor_desc_infer_fn = 1;
+  let has_physical_tensor_desc_infer_fn = 1;
+  let has_get_sbp_fn = 1;
+  let has_data_type_infer_fn = 1;
+  let has_input_arg_modify_fn = 1;
+}
+
+def OneFlow_ReplicationPad1DGradOp : OneFlow_BaseOp<"replication_pad1d_grad", [NoSideEffect, DeclareOpInterfaceMethods<UserOpCompatibleInterface>]> {
+  let input = (ins
+    OneFlow_Tensor:$dy
+  );
+  let output = (outs
+    OneFlow_Tensor:$dx
+  );
+  let attrs = (ins
+    SI64ArrayAttr:$padding
+  );
+  let has_logical_tensor_desc_infer_fn = 1;
+  let has_physical_tensor_desc_infer_fn = 1;
+  let has_get_sbp_fn = 1;
+  let has_data_type_infer_fn = 1;
+}
+
+def OneFlow_ReflectionPad1DOp : OneFlow_BaseOp<"reflection_pad1d", [NoSideEffect, DeclareOpInterfaceMethods<UserOpCompatibleInterface>]> {
+  let input = (ins
+    OneFlow_Tensor:$x
+  );
+  let output = (outs
+    OneFlow_Tensor:$y
+  );
+  let attrs = (ins
+    SI64ArrayAttr:$padding
+  );
+  let has_logical_tensor_desc_infer_fn = 1;
+  let has_physical_tensor_desc_infer_fn = 1;
+  let has_get_sbp_fn = 1;
+  let has_data_type_infer_fn = 1;
+  let has_input_arg_modify_fn = 1;
+}
+
+def OneFlow_ReflectionPad1DGradOp : OneFlow_BaseOp<"reflection_pad1d_grad", [NoSideEffect, DeclareOpInterfaceMethods<UserOpCompatibleInterface>]> {
+  let input = (ins
+    OneFlow_Tensor:$dy
+  );
+  let output = (outs
+    OneFlow_Tensor:$dx
+  );
+  let attrs = (ins
+    SI64ArrayAttr:$padding
+  );
+  let has_logical_tensor_desc_infer_fn = 1;
+  let has_physical_tensor_desc_infer_fn = 1;
+  let has_get_sbp_fn = 1;
+  let has_data_type_infer_fn = 1;
+}
 
 def OneFlow_ReflectionPad2DOp : OneFlow_BaseOp<"reflection_pad2d", [NoSideEffect, DeclareOpInterfaceMethods<UserOpCompatibleInterface>]> {
   let input = (ins
