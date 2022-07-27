@@ -1350,7 +1350,7 @@ def OneFlow_FusedBCEReduceMeanFwBwOp : OneFlow_BaseOp<"fused_bce_reduce_mean_fw_
   let output = (outs
     OneFlow_Tensor:$out,
     OneFlow_Tensor:$dx
-  );    
+  );
   let attrs = (ins
     OneFlow_DataType:$out_dtype,
     DefaultValuedAttr<F64Attr, "0.">:$constant_value
@@ -1360,7 +1360,6 @@ def OneFlow_FusedBCEReduceMeanFwBwOp : OneFlow_BaseOp<"fused_bce_reduce_mean_fw_
   let has_get_sbp_fn = 1;
   let has_data_type_infer_fn = 1;
 }
-
 
 def OneFlow_SigmoidCrossEntropyOp : OneFlow_BaseOp<"sigmoid_cross_entropy", [NoSideEffect, DeclareOpInterfaceMethods<UserOpCompatibleInterface>]> {
   let input = (ins
