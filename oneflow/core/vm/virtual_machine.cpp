@@ -321,10 +321,7 @@ void VirtualMachine::ScheduleLoop(const std::function<void()>& Initializer) {
         //  `engine_->SchedulerEmpty()`
         // used
         //  here, because VirtualMachine::ScheduleLoop is more likely to get the mutex lock.
-        do {
-          engine_->Schedule(schedule_ctx);
-          std::this_thread::yield();
-        } while (!engine_->SchedulerThreadUnsafeEmpty());
+        do { engine_->Schedule(schedule_ctx); } while (!engine_->SchedulerThreadUnsafeEmpty());
       } while (++i < kNumSchedulingPerTimoutTest);
     } while (MicrosecondsFrom(start) < kWorkingMicroseconds);
   }
