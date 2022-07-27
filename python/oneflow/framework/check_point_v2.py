@@ -376,5 +376,23 @@ def save(
         write_to_path(path)
 
 
+def save_one_embedding_info(state_dict: Any, path: Union[str, Path]) -> None:
+    path: Path = Path(path)
+
+    for module_key in state_dict["module"].keys():
+        if (
+            "OneEmbeddingSnapshot" in module_key
+            or "OneEmbeddingKeyValueOptions" in module_key
+        ):
+            dir_name = path / f"{module_key}"
+            data_path = ""
+            if "OneEmbeddingSnapshot" in module_key:
+                data_path = os.path.join(dir_name, "Snapshot")
+            else:
+                data_path = os.path.join(dir_name, "KeyValueOptions")
+            os.makedirs(dir_name, exist_ok=True)
+            with open(data_path, "w") as f:
+                f.write(state_dict["module"][module_key])
+
 save_load_path = None
 global_src_dsk_rank = None
