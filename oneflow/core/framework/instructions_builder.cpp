@@ -37,7 +37,6 @@ limitations under the License.
 #include "oneflow/core/vm/lazy_job_instruction_policy.h"
 #include "oneflow/core/vm/global_sync_instruction_policy.h"
 #include "oneflow/core/vm/op_call_instruction_policy.h"
-#include "oneflow/core/vm/touch_tensors_instruction_type.h"
 #include "oneflow/core/vm/stream_wait_instruction_policy.h"
 #include "oneflow/core/vm/touch_tensors_instruction_policy.h"
 #include "oneflow/core/vm/virtual_machine.h"
@@ -536,7 +535,7 @@ bool SupportingStreamWait(Symbol<Stream> from_stream, Symbol<Stream> to_stream) 
 Maybe<void> InstructionsBuilder::SoftSyncStreamBetween(
     small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&& dependences,
     Symbol<Stream> from_stream, Symbol<Stream> to_stream) {
-  CHECK(from_stream != to_stream) << "synchronization is unecessary";
+  CHECK(from_stream != to_stream) << "synchronization is unnecessary";
   if (SupportingStreamWait(from_stream, to_stream)) {
     JUST(StreamWait(std::move(dependences), from_stream, to_stream));
   } else {
@@ -551,8 +550,8 @@ Maybe<void> InstructionsBuilder::StreamWait(
   auto* from_vm_stream = JUST(Singleton<VirtualMachine>::Get()->GetVmStream(from_stream));
   auto* to_vm_stream = JUST(Singleton<VirtualMachine>::Get()->GetVmStream(to_stream));
   auto instruction = intrusive::make_shared<vm::Instruction>(
-      to_vm_stream,
-      std::make_unique<vm::StreamWaitInstructionPolicy>(std::move(dependences), from_vm_stream));
+      to_vm_stream, std::make_unique<vm::StreamWaitInstructionPolicy>(
+                        std::move(dependences), from_vm_stream, to_vm_stream));
   instruction_list_->EmplaceBack(std::move(instruction));
   return Maybe<void>::Ok();
 }

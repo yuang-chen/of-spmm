@@ -34,10 +34,8 @@ class StreamWaitInstructionPolicy final : public vm::InstructionPolicy {
  public:
   StreamWaitInstructionPolicy(
       small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&& dependences,
-      vm::Stream* from_vm_stream);
+      vm::Stream* from_vm_stream, vm::Stream* to_vm_stream);
   ~StreamWaitInstructionPolicy() = default;
-
-  Dependence* stream_sequential_dependence() const override { return nullptr; }
 
   std::string DebugName(const vm::Instruction&) const override { return "StreamWait"; }
 
