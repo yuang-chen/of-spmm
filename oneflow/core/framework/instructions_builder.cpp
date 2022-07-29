@@ -442,11 +442,9 @@ Maybe<void> InstructionsBuilder::TouchTensors(
 Maybe<void> InstructionsBuilder::TouchTensors(const vm::EagerBlobObjectListPtr& eager_blob_objects,
                                               Symbol<Stream> stream) {
   JUST(SoftSyncStream(*eager_blob_objects, stream));
-  const auto& phy_instr_operand =
-      std::make_shared<vm::TouchTensorsPhyInstrOperand>(*eager_blob_objects);
   auto instruction = intrusive::make_shared<vm::Instruction>(
       JUST(Singleton<VirtualMachine>::Get()->GetVmStream(stream)),
-      std::make_unique<vm::TouchTensorsInstructionPolicy>(*eager_blob_object));
+      std::make_unique<vm::TouchTensorsInstructionPolicy>(*eager_blob_objects));
   instruction_list_->EmplaceBack(std::move(instruction));
   return Maybe<void>::Ok();
 }

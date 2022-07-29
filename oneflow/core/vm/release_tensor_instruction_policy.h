@@ -176,6 +176,12 @@ struct MakeReleaseTensorInstructionPolicy
     return VisitCompute(data_type, eager_blob_object, stream);
   }
 
+  static std::unique_ptr<vm::InstructionPolicy> VisitTmpCompute(
+      DataType data_type, const std::shared_ptr<vm::EagerBlobObject>& eager_blob_object,
+      const Optional<vm::Stream*>& stream) {
+    return VisitCompute(data_type, eager_blob_object, stream);
+  }
+
  private:
   static std::unique_ptr<vm::InstructionPolicy> Make(
       DataType data_type, const std::shared_ptr<vm::EagerBlobObject>& eager_blob_object,
