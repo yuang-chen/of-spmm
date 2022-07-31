@@ -26,6 +26,7 @@ namespace oneflow {
 namespace vm {
 
 class Instruction;
+class Stream;
 
 class InstructionType {
  public:
@@ -41,6 +42,9 @@ class InstructionType {
     OF_PROFILER_RANGE_GUARD(std::string("Compute:") + DebugName(*instruction));
     Compute(instruction);
   }
+
+  // Same stream.
+  virtual bool Prescheduleable(const Stream* src, const Stream* dst) const { return src == dst; }
 
   virtual bool IsBarrier() const { return false; }
   virtual InstructionFuseType fuse_type() const { return kDisableInstructionFuse; }
