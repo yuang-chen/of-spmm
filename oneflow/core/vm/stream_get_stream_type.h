@@ -64,8 +64,7 @@ struct CreateStreamPolicy final : public StreamRoleVisitor<CreateStreamPolicy> {
     return std::shared_ptr<vm::StreamPolicy>(new vm::PinnedEpStreamPolicy(device));
   }
   static Maybe<vm::StreamPolicy> VisitTmpCompute(Symbol<Device> device) {
-    const auto* stream_type = SingletonPtr<vm::EventRecordedEpStreamType>();
-    return Create(stream_type, device);
+    return std::shared_ptr<vm::StreamPolicy>(new vm::EventRecordedEpStreamPolicy(device));
   }
 
  private:

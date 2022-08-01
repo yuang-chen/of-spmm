@@ -141,9 +141,9 @@ struct GetRecordEventInstructionPolicy : public StreamRoleVisitor<GetRecordEvent
         new vm::EpRecordEventInstructionPolicy(std::forward<Args>(args)...));
   }
   template<typename... Args>
-  static std::unique_ptr<vm::InstructionPolicy> VisitTmpCompute(DeviceType device_type,
-                                                                Args&&... args) {
-    return std::make_unique<vm::EpRecordEventInstructionPolicy>(std::forward<Args>(args)...);
+  static Maybe<vm::InstructionPolicy> VisitTmpCompute(DeviceType device_type, Args&&... args) {
+    return std::shared_ptr<vm::InstructionPolicy>(
+        new vm::EpRecordEventInstructionPolicy(std::forward<Args>(args)...));
   }
 };
 
