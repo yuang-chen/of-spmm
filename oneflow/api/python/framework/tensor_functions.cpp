@@ -641,7 +641,7 @@ static PyObject* PyTensorObject_local_to_global(PyObject* self, PyObject* args, 
   CHECK_OR_THROW(tensor->is_local()) << Error::RuntimeError() << "input must be a local tensor";
   PyObject* placement_obj = Py_None;
   PyObject* sbp_obj = Py_None;
-  bool check_meta = true;
+  bool check_meta = false;
   static const char* keywords[4] = {"placement", "sbp", "check_meta", NULL};
   if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|OO$O!:local_to_global",
                                    const_cast<char**>(keywords), &placement_obj, &sbp_obj,
