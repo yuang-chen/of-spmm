@@ -60,14 +60,14 @@ namespace oneflow {
 namespace {
 
 Maybe<Symbol<Stream>> RawGetCriticalSectionStream() {
-  return Stream::New(JUST(Device::New("cpu")), StreamRole::kCriticalSection);
+  return Stream::New(JUST(Device::New("cpu")), StreamType::kCriticalSection);
 }
 
 static constexpr auto* GetCriticalSectionStream =
     DECORATE(&RawGetCriticalSectionStream, ThreadLocal);
 
 Maybe<Symbol<Stream>> RawGetLazyJobLauncherStream() {
-  return Stream::New(JUST(Device::New("cpu")), StreamRole::kLazyJobLauncher);
+  return Stream::New(JUST(Device::New("cpu")), StreamType::kLazyJobLauncher);
 }
 
 static constexpr auto* GetLazyJobLauncherStream =
@@ -388,11 +388,11 @@ Maybe<void> InstructionsBuilder::ReleaseTensor(
   Optional<Symbol<Stream>> stream{};
   if (*one::CurrentDevVmDepObjectConsumeMode() == one::DevVmDepObjectConsumeMode::NONE) {
     stream = Optional<Symbol<Stream>>(NullOpt);
-  } else if (IsCommNetStream::Visit(last_used_stream->stream_role())) {
+  } else if (IsCommNetStream::Visit(last_used_stream->stream_type())) {
     // Disable inter-device instruction sequential for tensor used by communicative stream.
     // It's not acceptable for us that cuda compute stream is blocked by cuda nccl stream.
     stream = Optional<Symbol<Stream>>(NullOpt);
-  } else if (IsCommNetStream::Visit(producer_stream->stream_role())) {
+  } else if (IsCommNetStream::Visit(producer_stream->stream_type())) {
     // Disable inter-device instruction sequential for tensor produced by communicative stream.
     stream = Optional<Symbol<Stream>>(NullOpt);
   } else {
@@ -401,11 +401,11 @@ Maybe<void> InstructionsBuilder::ReleaseTensor(
   auto vm_stream = stream.map([](Symbol<Stream> stream) -> vm::Stream* {
     return CHECK_JUST(Singleton<VirtualMachine>::Get()->GetVmStream(stream));
   });
-  StreamRole stream_role = producer_stream->stream_role();
+  StreamType stream_type = producer_stream->stream_type();
   DataType data_type = eager_blob_object->data_type();
   auto instruction = intrusive::make_shared<vm::Instruction>(
       JUST(Singleton<VirtualMachine>::Get()->GetVmStream(producer_stream)),
-      JUST(vm::MakeReleaseTensorInstructionPolicy::Visit(stream_role, data_type, eager_blob_object,
+      JUST(vm::MakeReleaseTensorInstructionPolicy::Visit(stream_type, data_type, eager_blob_object,
                                                          vm_stream)));
   instruction_list_->EmplaceBack(std::move(instruction));
 
@@ -504,10 +504,10 @@ bool SupportingStreamWait(Symbol<Stream> from_stream, Symbol<Stream> to_stream) 
   DeviceType from_device_type = from_stream->device()->enum_type();
   DeviceType to_device_type = from_stream->device()->enum_type();
   return from_stream->device() == to_stream->device() && from_device_type == DeviceType::kCUDA
-         && StreamSupportStreamWait::Visit(from_stream->stream_role(), from_device_type)
-         && StreamSupportStreamWait::Visit(to_stream->stream_role(), to_device_type)
-         && !StreamOnIndependentThread::Visit(from_stream->stream_role())
-         && !StreamOnIndependentThread::Visit(to_stream->stream_role());
+         && StreamSupportStreamWait::Visit(from_stream->stream_type(), from_device_type)
+         && StreamSupportStreamWait::Visit(to_stream->stream_type(), to_device_type)
+         && !StreamOnIndependentThread::Visit(from_stream->stream_type())
+         && !StreamOnIndependentThread::Visit(to_stream->stream_type());
 }
 
 }  // namespace
@@ -541,14 +541,14 @@ Maybe<void> InstructionsBuilder::RecordEvent(
         compute_local_dep_objects,
     Symbol<Stream> last_used_stream) {
   DeviceType device_type = last_used_stream->device()->enum_type();
-  if (!NeedSoftSync::Visit(last_used_stream->stream_role(), device_type)) {
+  if (!NeedSoftSync::Visit(last_used_stream->stream_type(), device_type)) {
     return Maybe<void>::Ok();
   }
   std::string modifier = "mut";
-  StreamRole stream_role = last_used_stream->stream_role();
+  StreamType stream_type = last_used_stream->stream_type();
   auto instruction = intrusive::make_shared<vm::Instruction>(
       JUST(Singleton<VirtualMachine>::Get()->GetVmStream(last_used_stream)),
-      JUST(GetRecordEventInstructionPolicy::Visit(stream_role, device_type,
+      JUST(GetRecordEventInstructionPolicy::Visit(stream_type, device_type,
                                                   std::move(compute_local_dep_objects), modifier)));
   instruction_list_->EmplaceBack(std::move(instruction));
   return Maybe<void>::Ok();
@@ -557,7 +557,8 @@ Maybe<void> InstructionsBuilder::RecordEvent(
 template<typename T>
 Maybe<void> InstructionsBuilder::SyncAccessBlobByCallback(
     const T tensor, const std::shared_ptr<BlockingThenBusy>& btb,
-    const std::function<void(uint64_t)>& Callback, const std::string& modifier) {
+    const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& Callback,
+    const std::string& modifier) {
   // We want balance the cpu overhead and notification latency.
   //
   // balanced timeline here:
@@ -590,9 +591,11 @@ Maybe<void> InstructionsBuilder::SyncAccessBlobByCallback(
   //                 |                                             |                |
   //   main thread:  |<---------------------------- S ----------------------------->|
 
-  const auto& CallbackWrapper = [btb, Callback](uint64_t ofblob_ptr) {
+  const auto& CallbackWrapper = [btb, Callback](
+                                    ep::Stream* stream,
+                                    const std::shared_ptr<vm::EagerBlobObject>& eager_blob_object) {
     btb->mut_blocking_counter()->Decrease();
-    Callback(ofblob_ptr);
+    Callback(stream, eager_blob_object);
     btb->mut_spin_counter()->Decrease();
   };
   return AccessBlobByCallback(tensor, CallbackWrapper, modifier);
@@ -600,11 +603,13 @@ Maybe<void> InstructionsBuilder::SyncAccessBlobByCallback(
 
 template Maybe<void> InstructionsBuilder::SyncAccessBlobByCallback(
     const std::shared_ptr<one::LocalTensor> tensor, const std::shared_ptr<BlockingThenBusy>& btb,
-    const std::function<void(uint64_t)>& Callback, const std::string& modifier);
+    const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& Callback,
+    const std::string& modifier);
 
 template Maybe<void> InstructionsBuilder::SyncAccessBlobByCallback(
     const one::EagerLocalTensorImpl* tensor, const std::shared_ptr<BlockingThenBusy>& btb,
-    const std::function<void(uint64_t)>& Callback, const std::string& modifier);
+    const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& Callback,
+    const std::string& modifier);
 
 namespace {
 
@@ -619,9 +624,10 @@ Maybe<Symbol<Device>> GetDevice(const one::EagerLocalTensorImpl* tensor) {
 }  // namespace
 
 template<typename T>
-Maybe<void> InstructionsBuilder::AccessBlobByCallback(const T tensor,
-                                                      const std::function<void(uint64_t)>& callback,
-                                                      const std::string& modifier) {
+Maybe<void> InstructionsBuilder::AccessBlobByCallback(
+    const T tensor,
+    const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& callback,
+    const std::string& modifier) {
   const std::shared_ptr<vm::EagerBlobObject>& eager_blob_object = JUST(tensor->eager_blob_object());
   Symbol<Device> device = JUST(GetDevice(tensor));
   // Do not use producer_stream or last_used_stream.
@@ -646,18 +652,20 @@ Maybe<void> InstructionsBuilder::AccessBlobByCallback(const T tensor,
 }
 
 template Maybe<void> InstructionsBuilder::AccessBlobByCallback(
-    const std::shared_ptr<one::LocalTensor> tensor, const std::function<void(uint64_t)>& callback,
+    const std::shared_ptr<one::LocalTensor> tensor,
+    const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& callback,
     const std::string& modifier);
 
 template Maybe<void> InstructionsBuilder::AccessBlobByCallback(
-    const one::EagerLocalTensorImpl* tensor, const std::function<void(uint64_t)>& callback,
+    const one::EagerLocalTensorImpl* tensor,
+    const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& callback,
     const std::string& modifier);
 
 namespace {
 
 Maybe<Symbol<Stream>> GetBarrierStream() {
   auto device = JUST(Device::New("cpu"));
-  return Stream::New(device, StreamRole::kBarrier);
+  return Stream::New(device, StreamType::kBarrier);
 }
 
 }  // namespace

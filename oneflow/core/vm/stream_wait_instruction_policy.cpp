@@ -17,7 +17,6 @@ limitations under the License.
 #include "oneflow/core/vm/ep_event.h"
 #include "oneflow/core/vm/instruction.h"
 #include "oneflow/core/vm/stream.h"
-#include "oneflow/core/vm/naive_stream_policy.h"
 #include "oneflow/core/ep/cuda/cuda_event.h"
 #include "oneflow/core/ep/cuda/cuda_stream.h"
 #include "oneflow/core/ep/cuda/cuda_device.h"
@@ -43,22 +42,13 @@ bool StreamWaitInstructionPolicy::Prescheduleable(const Stream* src, const Strea
 }
 
 void StreamWaitInstructionPolicy::InitInstructionStatus(Instruction* instruction) {
-  {
-    auto* stream = mut_from_vm_stream();
-    auto* ep_stream_policy_base =
-        CHECK_NOTNULL(dynamic_cast<EpStreamPolicyBase*>(instruction->mut_stream_policy()));
-    ep_stream_policy_base->InitInstructionStatus(*stream, instruction->mut_status_buffer());
-    auto* ep_event_provider = ep_stream_policy_base->ep_event_provider();
-    const auto& ep_event = CHECK_NOTNULL(ep_event_provider)->GetReusedEpEvent();
-    mut_ep_event() = ep_event;
-  }
-  {
-    auto* status_buffer = instruction->mut_status_buffer();
-    auto* stream = instruction->mut_stream();
-    instruction->stream_policy().InitInstructionStatus(*stream, status_buffer);
-    auto* data_ptr = status_buffer->mut_buffer();
-    EpOptionalEventRecordStatusQuerier::MutCast(data_ptr)->reset_ep_event(nullptr);
-  }
+  auto* stream = mut_from_vm_stream();
+  auto* ep_stream_policy_base =
+      CHECK_NOTNULL(dynamic_cast<EpStreamPolicyBase*>(instruction->mut_stream_policy()));
+  ep_stream_policy_base->InitInstructionStatus(*stream, instruction->mut_status_buffer());
+  auto* ep_event_provider = ep_stream_policy_base->ep_event_provider();
+  const auto& ep_event = CHECK_NOTNULL(ep_event_provider)->GetReusedEpEvent();
+  mut_ep_event() = ep_event;
 }
 
 void StreamWaitInstructionPolicy::DeleteInstructionStatus(Instruction* instruction) {
@@ -91,7 +81,8 @@ void StreamWaitInstructionPolicy::Compute(vm::Instruction* instruction) {
     auto* ep_cuda_event = CHECK_NOTNULL(dynamic_cast<ep::CudaEvent*>(ep_event->mut_event()));
     auto* ep_cuda_stream = CHECK_NOTNULL(dynamic_cast<ep::CudaStream*>(to_ep_stream));
 
-    OF_CUDA_CHECK(cudaStreamWaitEvent(ep_cuda_stream->cuda_stream(), ep_cuda_event->cuda_event()));
+    OF_CUDA_CHECK(
+        cudaStreamWaitEvent(ep_cuda_stream->cuda_stream(), ep_cuda_event->cuda_event(), 0));
 #else
     UNIMPLEMENTED();
 #endif  // WITH_CUDA

@@ -82,13 +82,16 @@ class InstructionsBuilder : public std::enable_shared_from_this<InstructionsBuil
                            Symbol<Stream> stream);
 
   template<typename T>
-  Maybe<void> SyncAccessBlobByCallback(const T tensor, const std::shared_ptr<BlockingThenBusy>& btb,
-                                       const std::function<void(uint64_t)>& Callback,
-                                       const std::string& modifier);
+  Maybe<void> SyncAccessBlobByCallback(
+      const T tensor, const std::shared_ptr<BlockingThenBusy>& btb,
+      const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& Callback,
+      const std::string& modifier);
 
   template<typename T>
-  Maybe<void> AccessBlobByCallback(const T tensor, const std::function<void(uint64_t)>& callback,
-                                   const std::string& modifier);
+  Maybe<void> AccessBlobByCallback(
+      const T tensor,
+      const std::function<void(ep::Stream*, const std::shared_ptr<vm::EagerBlobObject>&)>& callback,
+      const std::string& modifier);
 
   Maybe<void> GlobalSync();
   Maybe<void> Barrier(const std::function<void()>& callback);
@@ -148,14 +151,6 @@ class InstructionsBuilder : public std::enable_shared_from_this<InstructionsBuil
   Maybe<void> RecordEvent(small_vector<intrusive::shared_ptr<LocalDepObject>, kOpArgsReservedSize>&&
                               compute_local_dep_objects,
                           Symbol<Stream> stream);
-
-  template<typename PhyInstrOperandT>
-  Maybe<void> MakeCriticalSectionBegin(vm::Stream* vm_stream,
-                                       const std::shared_ptr<PhyInstrOperandT>& phy_instr_operand);
-
-  template<typename PhyInstrOperandT>
-  Maybe<void> MakeCriticalSectionEnd(vm::Stream* vm_stream,
-                                     const std::shared_ptr<PhyInstrOperandT>& phy_instr_operand);
 
   vm::InstructionList* instruction_list_;
 };

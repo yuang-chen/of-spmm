@@ -856,7 +856,34 @@ ONEFLOW_FUNCTION_LIBRARY(m) {
                   JUST(OpInterpUtil::Dispatch<TensorTuple>(*op, inputs, *attrs));
                   return Maybe<void>::Ok();
                 });
+
   struct DispatchEagerCclAllReduce {
+    Maybe<AttrMap> operator()(float learning_rate, double scale, float l1, float l2, float rho,
+                              float epsilon, bool maximize, float weight_decay) {
+      MutableAttrMap attrs;
+      JUST(attrs.SetAttr("learning_rate_val", learning_rate));
+      JUST(attrs.SetAttr("scale", scale));
+      JUST(attrs.SetAttr("l1", l1));
+      JUST(attrs.SetAttr("l2", l2));
+      JUST(attrs.SetAttr("rho", rho));
+      JUST(attrs.SetAttr("epsilon", epsilon));
+      JUST(attrs.SetAttr("maximize", maximize));
+      JUST(attrs.SetAttr("weight_decay", weight_decay));
+      return AttrMap(attrs);
+    }
+  };
+
+  m.add_functor("DispatchAdadeltaUpdate",
+                [](const std::shared_ptr<OpExpr>& op, const TensorTuple& inputs,
+                   float learning_rate, double scale, float l1, float l2, float rho, float epsilon,
+                   bool maximize, float weight_decay) -> Maybe<void> {
+                  constexpr auto* GetAttrs = CACHED_FUNCTOR_PTR(DispatchEagerCclAllReduce);
+                  const auto attrs = *JUST(
+                      GetAttrs(learning_rate, scale, l1, l2, rho, epsilon, maximize, weight_decay));
+                  JUST(OpInterpUtil::Dispatch<TensorTuple>(*op, inputs, attrs));
+                  return Maybe<void>::Ok();
+                });
+  struct DispatchGlobalEagerCclAllReduce {
     Maybe<AttrMap> operator()(const std::string& parallel_conf, bool async_launch) {
       MutableAttrMap attrs;
       JUST(attrs.SetAttr("parallel_conf", parallel_conf));
@@ -864,10 +891,10 @@ ONEFLOW_FUNCTION_LIBRARY(m) {
       return AttrMap(attrs);
     }
   };
-  m.add_functor("DispatchEagerCclAllReduce",
+  m.add_functor("DispatchGlobalEagerCclAllReduce",
                 [](const std::shared_ptr<OpExpr>& op, const std::shared_ptr<Tensor>& input,
                    const std::string& parallel_conf, bool async_launch) -> Maybe<Tensor> {
-                  constexpr auto* GetAttrs = CACHED_FUNCTOR_PTR(DispatchEagerCclAllReduce);
+                  constexpr auto* GetAttrs = CACHED_FUNCTOR_PTR(DispatchGlobalEagerCclAllReduce);
                   const auto& attrs = JUST(GetAttrs(parallel_conf, async_launch));
                   return OpInterpUtil::Dispatch<Tensor>(*op, {input}, *attrs);
                 });

@@ -213,7 +213,8 @@ def DistributedDataParallel(
 
         def pre_forward_hook(module, input):
             with flow.no_grad():
-                flow._C.broadcast(list(module.buffers()), inplace=True)
+                buffers = list(module.buffers())
+                flow._C.broadcast(buffers, inplace=True)
 
         module.register_forward_pre_hook(pre_forward_hook)
 
