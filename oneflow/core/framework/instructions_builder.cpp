@@ -50,7 +50,7 @@ limitations under the License.
 #include "oneflow/core/framework/stream.h"
 #include "oneflow/core/framework/stream_need_soft_sync.h"
 #include "oneflow/core/framework/stream_is_comm_net_stream.h"
-#include "oneflow/core/framework/stream_type_is_tmp.h"
+#include "oneflow/core/vm/stream_type_is_tmp.h"
 #include "oneflow/core/framework/stream_support_stream_wait.h"
 #include "oneflow/core/framework/stream_on_independent_thread.h"
 #include "oneflow/core/job/env_desc.h"

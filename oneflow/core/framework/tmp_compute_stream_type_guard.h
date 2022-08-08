@@ -20,6 +20,7 @@ limitations under the License.
 #include "oneflow/core/common/decorator.h"
 #include "oneflow/core/common/thread_local_guard.h"
 #include "oneflow/core/framework/stream.h"
+#include "oneflow/core/framework/stream_get_stream_type_name.h"
 
 namespace oneflow {
 
@@ -30,15 +31,18 @@ class TmpComputeStreamTypeGuard final : public ThreadLocalGuard<std::string> {
 
   static Maybe<Symbol<Stream>> TryConvertToTmpCompute(Symbol<Stream> stream) {
     if (!Current().has_value()) { return stream; }
+    Symbol<Stream> ret;
     if (stream->stream_type() == StreamType::kCompute) {
-      return Stream::New(stream->device(), StreamType::kTmpCompute, *JUST(Current()));
+      ret = JUST(Stream::New(stream->device(), StreamType::kTmpCompute, *JUST(Current())));
     } else if (stream->stream_type() == StreamType::kHost2Device) {
-      return Stream::New(stream->device(), StreamType::kTmpHost2Device);
+      ret = JUST(Stream::New(stream->device(), StreamType::kTmpHost2Device));
     } else if (stream->stream_type() == StreamType::kDevice2Host) {
-      return Stream::New(stream->device(), StreamType::kTmpDevice2Host);
+      ret = JUST(Stream::New(stream->device(), StreamType::kTmpDevice2Host));
     } else {
-      return stream;
+      ret = stream;
     }
+    LOG(ERROR) << "stream: " << GetStreamTypeName::Visit(stream->stream_type()) << ", ret: "<<GetStreamTypeName::Visit(ret->stream_type());
+    return ret;
   }
 };
 

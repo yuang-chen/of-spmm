@@ -24,10 +24,8 @@ jobs:
       max-parallel: 1
       fail-fast: false
       matrix:
-        entry: ["canary", "profiler"]
+        entry: ["profiler"]
         include:
-          - entry: "canary"
-            cmake-init-cache: "cmake/caches/ci/canary/cuda.cmake"
           - entry: "profiler"
             cmake-init-cache: "cmake/caches/ci/profiler/cuda.cmake"
     env:
@@ -73,7 +71,6 @@ jobs:
           retry-failed-build: true
           clean-ccache: true
           python-versions: |
-            3.7
             3.8
       - name: Upload wheelhouse
         uses: ./.github/actions/upload_oss
