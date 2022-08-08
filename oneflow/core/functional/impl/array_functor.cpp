@@ -1810,12 +1810,12 @@ class CopyFunctor {
   CopyFunctor() { op_ = CHECK_JUST(one::OpBuilder("copy").Input("in").Output("out").Build()); }
   struct Copy {
     Maybe<AttrMap> operator()(const std::string& device_type, const int64_t& device_id,
-                              const bool pin_memory, const bool asynced_copy) {
+                              const bool pin_memory, const bool tmp_copy) {
       MutableAttrMap attrs;
       JUST(attrs.SetAttr<std::string>("device_type", device_type));
       JUST(attrs.SetAttr<int64_t>("device_id", device_id));
       JUST(attrs.SetAttr<bool>("pin_memory", pin_memory));
-      JUST(attrs.SetAttr<bool>("asynced_copy", asynced_copy));
+      JUST(attrs.SetAttr<bool>("tmp_copy", tmp_copy));
       return AttrMap(attrs);
     }
   };
@@ -1823,15 +1823,15 @@ class CopyFunctor {
   Maybe<Tensor> operator()(const std::shared_ptr<one::Tensor>& x, const std::string& device_type,
                            const int64_t& device_id, const bool pin_memory) const {
     constexpr auto* GetAttrs = CACHED_FUNCTOR_PTR(Copy);
-    const bool asynced_copy = JUST(GetAsyncedCopy(*x));
-    const auto attrs = *JUST(GetAttrs(device_type, device_id, pin_memory, asynced_copy));
+    const bool tmp_copy = JUST(GetTmpCopy(*x));
+    const auto attrs = *JUST(GetAttrs(device_type, device_id, pin_memory, tmp_copy));
 #ifdef WITH_CUDA
     if (device_type == "cuda") { InitCudaContextOnce(device_id); }
 #endif
     return OpInterpUtil::Dispatch<Tensor>(*op_, {x}, attrs);
   }
 
-  Maybe<bool> GetAsyncedCopy(const one::Tensor& x) const {
+  Maybe<bool> GetTmpCopy(const one::Tensor& x) const {
     if (!x.is_eager()) { return false; }
     if (!x.is_local()) { return false; }
     const auto& eager_blob_object = JUST(x.eager_blob_object());
