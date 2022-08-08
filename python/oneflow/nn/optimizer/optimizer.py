@@ -394,7 +394,15 @@ class Optimizer(object):
                         if param.is_local:
                             param.grad.zero_()
                         else:
-                            param.grad = flow.zeros_like(param.grad, sbp=[flow.sbp.partial_sum if x == flow.sbp.broadcast else x for x in param.grad.sbp])
+                            param.grad = flow.zeros_like(
+                                param.grad,
+                                sbp=[
+                                    flow.sbp.partial_sum
+                                    if x == flow.sbp.broadcast
+                                    else x
+                                    for x in param.grad.sbp
+                                ],
+                            )
 
     def _parse_input_parameters(self, parameters):
         """
