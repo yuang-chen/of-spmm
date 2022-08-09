@@ -18,6 +18,7 @@ limitations under the License.
 #include "oneflow/core/common/cached_functor_ptr.h"
 #include "oneflow/core/framework/attr_map.h"
 #include "oneflow/core/framework/nd_sbp.h"
+#include "oneflow/core/framework/op_interpreter/lazy_op_interpreter.h"
 #include "oneflow/core/framework/op_interpreter/op_interpreter_util.h"
 #include "oneflow/core/framework/tensor.h"
 #include "oneflow/core/framework/tensor_tuple.h"
@@ -34,12 +35,16 @@ ONEFLOW_FUNCTION_LIBRARY(m) {
   m.add_functor(
       "DispatchFeedInput",
       [](const std::shared_ptr<OpExpr>& op, const std::shared_ptr<Tensor>& input) -> Maybe<Tensor> {
-        return OpInterpUtil::Dispatch<Tensor>(*op, {input});
+        const auto& origin_input = JUST(OpInterpUtil::Dispatch<Tensor>(*op, {input}));
+        // Unpack input when do grad acc
+        return GradAccTryInsertUnpackAfterInput(origin_input);
       });
   m.add_functor(
       "DispatchFetchOutput",
       [](const std::shared_ptr<OpExpr>& op, const std::shared_ptr<Tensor>& input) -> Maybe<Tensor> {
-        return OpInterpUtil::Dispatch<Tensor>(*op, {input});
+        // Pack output when do grad acc
+        const auto& pack_input = JUST(GradAccTryInsertPackBeforeOutput(input));
+        return OpInterpUtil::Dispatch<Tensor>(*op, {pack_input});
       });
   struct DispatchFeedVariable final {
     Maybe<AttrMap> operator()(double l2) const {
@@ -52,8 +57,11 @@ ONEFLOW_FUNCTION_LIBRARY(m) {
                 [](const std::shared_ptr<OpExpr>& op, const std::shared_ptr<Tensor>& input,
                    const Scalar& l2) -> Maybe<Tensor> {
                   constexpr static auto* GetAttrs = CACHED_FUNCTOR_PTR(DispatchFeedVariable);
-                  const auto& attrs = JUST(GetAttrs(l2.As<double>()));
-                  return OpInterpUtil::Dispatch<Tensor>(*op, {input}, *attrs);
+                  const auto attrs = *JUST(GetAttrs(l2.As<double>()));
+                  const auto& origin_var =
+                      JUST(OpInterpUtil::Dispatch<Tensor>(*op, {input}, attrs));
+                  // Repeat variable when do grad acc
+                  return GradAccTryInsertRepeatAfterVar(origin_var);
                 });
   struct DispatchOfrecordReader {
     Maybe<AttrMap> operator()(const std::string& data_dir, int32_t data_part_num,
