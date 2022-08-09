@@ -57,7 +57,7 @@ ONEFLOW_FUNCTION_LIBRARY(m) {
                 [](const std::shared_ptr<OpExpr>& op, const std::shared_ptr<Tensor>& input,
                    const Scalar& l2) -> Maybe<Tensor> {
                   constexpr static auto* GetAttrs = CACHED_FUNCTOR_PTR(DispatchFeedVariable);
-                  const auto& attrs = JUST(GetAttrs(l2.As<double>()));
+                  const auto attrs = *JUST(GetAttrs(l2.As<double>()));
                   const auto& origin_var =
                       JUST(OpInterpUtil::Dispatch<Tensor>(*op, {input}, attrs));
                   // Repeat variable when do grad acc
