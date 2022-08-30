@@ -83,7 +83,7 @@ Maybe<const DTypeMeta&> DTypeMeta4DataType(DataType data_type) {
       {DataType::kOFRecord, DTypeMeta("oneflow.of_record", false, false, false, false)},
       {DataType::kTensorBuffer, DTypeMeta("oneflow.tensor_buffer", false, false, false, false)},
       {DataType::kBFloat16, DTypeMeta("oneflow.bfloat16", true, false, true, false)},
-      {DataType::kBool, DTypeMeta("oneflow.bool", false, false, false, false)},
+      {DataType::kBool, DTypeMeta("oneflow.bool", false, true, false, false)},
       {DataType::kComplex32, DTypeMeta("oneflow.complex32", false, false, false, true)},
       {DataType::kComplex64, DTypeMeta("oneflow.complex64", false, false, false, true)},
       {DataType::kComplex128, DTypeMeta("oneflow.complex128", false, false, false, true)},
