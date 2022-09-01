@@ -399,16 +399,6 @@ REGISTER_AVG_POOL_WITH_DEVICE(DeviceType::kCUDA)
 // TODO: REGISTER_AVG_POOL_WITH_DEVICE(DeviceType::kCUDA, half)
 #endif
 
-// NOTE: Temporarily, only avg_pool_2d half dtype is supported
-REGISTER_USER_KERNEL("avg_pool_2d")
-    .SetCreateFn<AvgPool2dKernel<DeviceType::kCUDA, half>>()
-    .SetIsMatchedHob((user_op::HobDeviceType() == DeviceType::kCUDA)
-                     && (user_op::HobDataType("x", 0) == GetDataType<half>::value));
-REGISTER_USER_KERNEL("avg_pool_2d_grad")
-    .SetCreateFn<AvgPool2dGradKernel<DeviceType::kCUDA, half>>()
-    .SetIsMatchedHob((user_op::HobDeviceType() == DeviceType::kCUDA)
-                     && (user_op::HobDataType("x", 0) == GetDataType<half>::value));
-
 OF_PP_SEQ_PRODUCT_FOR_EACH_TUPLE(INSTANTIATE_AVG_POOL_KERNEL_UTIL, (DeviceType::kCPU),
                                  AVG_POOL_DATA_TYPE_CPU_SEQ, AVG_POOL_IDX_DATA_TYPE_SEQ);
 
