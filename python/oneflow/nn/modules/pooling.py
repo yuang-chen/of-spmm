@@ -509,15 +509,21 @@ class AvgPool2d(Module):
         ceil_mode: bool = False,
         count_include_pad: bool = True,
         divisor_override: int = 0,
+        use_legacy_tf_pool = False,
     ):
         super().__init__()
         self.kernel_size = _pair(kernel_size)
         self.stride = _pair(stride) if (stride is not None) else _pair(kernel_size)
         self.ceil_mode = ceil_mode
+        self.use_legacy_tf_pool = use_legacy_tf_pool
 
-        if os.getenv("ONEFLOW_ENABLE_NHWC") == "1":
-            self.data_format = "NHWC"
-            self.channel_pos = "channels_last"
+        if os.getenv("ONEFLOW_ENABLE_NHWC") == "1" or use_legacy_tf_pool:
+            if use_legacy_tf_pool:
+                self.data_format = "NCHW"
+                self.channel_pos = "channels_first"
+            else:
+                self.data_format = "NHWC"
+                self.channel_pos = "channels_last"
             assert isinstance(padding, int) or isinstance(
                 padding, tuple
             ), "padding can only int int or tuple of 2 ints."
@@ -556,16 +562,28 @@ class AvgPool2d(Module):
 
     def forward(self, x):
         if self.data_format == "NCHW":
-            return flow._C.avg_pool2d(
-                x,
-                kernel_size=self.kernel_size,
-                stride=self.stride,
-                padding=self.padding,
-                ceil_mode=self.ceil_mode,
-                count_include_pad=self.count_include_pad,
-                divisor_override=self.divisor_override,
-                data_format=self.channel_pos,
-            )
+            if self.use_legacy_tf_pool:
+                return flow._C.avg_pool2d_nhwc(
+                    x,
+                    kernel_size=self.kernel_size,
+                    stride=self.stride,
+                    padding=self._padding_type,
+                    padding_before=self._padding_before,
+                    padding_after=self._padding_after,
+                    ceil_mode=self.ceil_mode,
+                    data_format=self.channel_pos,
+                )
+            else:
+                return flow._C.avg_pool2d(
+                    x,
+                    kernel_size=self.kernel_size,
+                    stride=self.stride,
+                    padding=self.padding,
+                    ceil_mode=self.ceil_mode,
+                    count_include_pad=self.count_include_pad,
+                    divisor_override=self.divisor_override,
+                    data_format=self.channel_pos,
+                )
         else:
             return flow._C.avg_pool2d_nhwc(
                 x,
