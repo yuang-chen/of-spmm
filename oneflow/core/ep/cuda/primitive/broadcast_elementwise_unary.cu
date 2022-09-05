@@ -226,16 +226,6 @@ void LaunchWithSimplified(CudaStream* stream, size_t simplified_num_dims,
       break;
     }
   }
-  bool continuous_output = true;
-  for (int i = simplified_num_dims - 1; i >= 0; i--) {
-    if ((i == simplified_num_dims - 1 && simplified_dst_strides[i] != 1)
-        || (i != simplified_num_dims - 1
-            && simplified_dst_strides[i]
-                   != simplified_dst_strides[i + 1] * simplified_dst_dims[i + 1])) {
-      continuous_output = false;
-      break;
-    }
-  }
   simplified_src_dims[simplified_num_dims - 1] /= pack_size;
   simplified_dst_dims[simplified_num_dims - 1] /= pack_size;
   DispatchNumDims<op, Src, Dst>(stream, pack_size, simplified_num_dims, simplified_src_dims,
