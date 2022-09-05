@@ -163,6 +163,7 @@ class ExpandStrideTestCase(flow.unittest.TestCase):
         ((2, 2), (1, 2, 2, 2)),
         ((2, 2), (2, 1, 2, 2)),
         ((2, 2), (2, 2, 2, 2)),
+        ((2, 1, 4), (2, 2, 2, 4)),
         ((2, 1, 3), (2, 1, -1, -1, -1)),
         ((2, 1, 3), (1, 2, -1, -1, -1)),
         ((2, 1, 3), (2, 2, -1, -1, -1)),
@@ -224,7 +225,7 @@ class ExpandStrideTestCase(flow.unittest.TestCase):
 
     def test_lazy(self):
         arg_dict = OrderedDict()
-        arg_dict["verbose"] = [True]
+        arg_dict["verbose"] = [False]
         arg_dict["device"] = ["cuda"]
         arg_dict["shapes"] = self.test_shape_tuple_list
         for kwargs in GenArgDict(arg_dict):
