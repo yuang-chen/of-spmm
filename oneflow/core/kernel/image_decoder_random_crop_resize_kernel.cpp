@@ -363,17 +363,17 @@ void GpuDecodeHandle::DecodeRandomCrop(const unsigned char* data, size_t length,
     auto status = nvjpegDecodeJpegHost(jpeg_handle_, jpeg_decoder, jpeg_state, jpeg_decode_params_,
                                        jpeg_stream_);
     if (status != NVJPEG_STATUS_SUCCESS) {
-      int width{};
-      int height{};
+      int width[NVJPEG_MAX_COMPONENT];
+      int height[NVJPEG_MAX_COMPONENT];
       nvjpegChromaSubsampling_t subsampling{};
       int num_components{};
       OF_NVJPEG_CHECK(nvjpegGetImageInfo(jpeg_handle_, data, length, &num_components, &subsampling,
-                                         &width, &height));
+                                         width, height));
       std::string path = FLAGS_log_dir + "/" + std::to_string(GetCurTime()) + ".jpeg";
       std::ofstream ofs(path, std::ios::out | std::ios::binary);
       ofs.write((const char*)data, length);
       ofs.close();
-      LOG(ERROR) << "nvjpegDecodeJpegHost failed: width:" << width << " height:" << height
+      LOG(ERROR) << "nvjpegDecodeJpegHost failed: width:" << width[0] << " height:" << height[0]
                  << " subsampling:" << subsampling << " num_components:" << num_components
                  << " roi.x " << roi.x << " rox.y:" << roi.y << " roi.h:" << roi.h
                  << " roi.w:" << roi.w << " file:" << path;
@@ -431,12 +431,12 @@ void GpuDecodeHandle::DecodeRandomCropResize(const unsigned char* data, size_t l
                                              unsigned char* workspace, size_t workspace_size,
                                              unsigned char* dst, int target_width,
                                              int target_height) {
-  int width;
-  int height;
+  int width[NVJPEG_MAX_COMPONENT];
+  int height[NVJPEG_MAX_COMPONENT];
   nvjpegChromaSubsampling_t subsampling;
   int num_components;
   nvjpegStatus_t status = nvjpegGetImageInfo(jpeg_handle_, data, length, &num_components,
-                                             &subsampling, &width, &height);
+                                             &subsampling, width, height);
   if (status != NVJPEG_STATUS_SUCCESS) {
     CHECK_LE(target_width * target_height * kNumChannels, fallback_buffer_size_);
     fallback_handle_.DecodeRandomCropResize(data, length, crop_generator, nullptr, 0,
@@ -449,14 +449,14 @@ void GpuDecodeHandle::DecodeRandomCropResize(const unsigned char* data, size_t l
   NoChangeROIGenerator no_change_roi_generator;
   RandomCropROIGenerator random_crop_roi_generator(crop_generator);
   if (use_hardware_acceleration_) {
-    DecodeRandomCrop(data, length, &no_change_roi_generator, workspace, workspace_size, &width,
-                     &height);
-    CropResize(workspace, width, height, &random_crop_roi_generator, dst, target_width,
+    DecodeRandomCrop(data, length, &no_change_roi_generator, workspace, workspace_size, &(width[0]),
+                     &(height[0]));
+    CropResize(workspace, width[0], height[0], &random_crop_roi_generator, dst, target_width,
                target_height);
   } else {
-    DecodeRandomCrop(data, length, &random_crop_roi_generator, workspace, workspace_size, &width,
-                     &height);
-    CropResize(workspace, width, height, &no_change_roi_generator, dst, target_width,
+    DecodeRandomCrop(data, length, &random_crop_roi_generator, workspace, workspace_size, &(width[0]),
+                     &(height[0]));
+    CropResize(workspace, width[0], height[0], &no_change_roi_generator, dst, target_width,
                target_height);
   }
 }
