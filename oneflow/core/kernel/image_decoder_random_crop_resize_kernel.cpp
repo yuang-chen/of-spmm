@@ -359,8 +359,27 @@ void GpuDecodeHandle::DecodeRandomCrop(const unsigned char* data, size_t length,
   }
   OF_NVJPEG_CHECK(nvjpegStateAttachPinnedBuffer(jpeg_state, jpeg_pinned_buffer_));
   OF_NVJPEG_CHECK(nvjpegStateAttachDeviceBuffer(jpeg_state, jpeg_device_buffer_));
-  OF_NVJPEG_CHECK(nvjpegDecodeJpegHost(jpeg_handle_, jpeg_decoder, jpeg_state, jpeg_decode_params_,
-                                       jpeg_stream_));
+  {
+    auto status = nvjpegDecodeJpegHost(jpeg_handle_, jpeg_decoder, jpeg_state, jpeg_decode_params_,
+                                       jpeg_stream_);
+    if (status != NVJPEG_STATUS_SUCCESS) {
+      int width{};
+      int height{};
+      nvjpegChromaSubsampling_t subsampling{};
+      int num_components{};
+      OF_NVJPEG_CHECK(nvjpegGetImageInfo(jpeg_handle_, data, length, &num_components, &subsampling,
+                                         &width, &height));
+      std::string path = FLAGS_log_dir + "/" + std::to_string(GetCurTime()) + ".jpeg";
+      std::ofstream ofs(path, std::ios::out | std::ios::binary);
+      ofs.write((const char*)data, length);
+      ofs.close();
+      LOG(ERROR) << "nvjpegDecodeJpegHost failed: width:" << width << " height:" << height
+                 << " subsampling:" << subsampling << " num_components:" << num_components
+                 << " roi.x " << roi.x << " rox.y:" << roi.y << " roi.h:" << roi.h
+                 << " roi.w:" << roi.w << " file:" << path;
+    }
+    OF_NVJPEG_CHECK(status);
+  }
   OF_NVJPEG_CHECK(nvjpegDecodeJpegTransferToDevice(jpeg_handle_, jpeg_decoder, jpeg_state,
                                                    jpeg_stream_, cuda_stream_));
   OF_NVJPEG_CHECK(
